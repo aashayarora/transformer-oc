@@ -1,0 +1,35 @@
+{
+  "train_data_dir": "./data/muonG/train",
+  "val_data_dir": "./data/muonG/val",
+  "train_subset": null,
+  "val_subset": null,
+  
+  "model": "transformer",
+
+  "hidden_dim": 128,
+  "num_layers": 4,
+  "nhead": 8,
+  "latent_dim": 64,
+  "dropout": 0.1,
+  
+  "block_size": 32,
+  "n_hashes": 4,
+  "num_regions": 8,
+  "num_w_per_dist": 8,
+  
+  "learning_rate": 0.001,
+  "weight_decay": 0.00001,
+  "batch_size": 1,
+  "epochs": 20,
+  "num_workers": 4,
+  "num_cpu_threads": 64,
+  
+  "scheduler_patience": 5,
+  "early_stopping_patience": 20,
+  
+  "output_dir": "./output",
+  "save_every": 10,
+  "resume": null,
+
+  "seed": 42
+}
