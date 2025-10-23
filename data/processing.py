@@ -8,6 +8,8 @@ import awkward as ak
 import torch
 from torch_geometric.data import Data
 
+import random
+
 SIM_VARS = ["sim_pt", "sim_eta", "sim_phi"]
 LS_VARS = ["ls_pt", "ls_eta", "ls_phi", "ls_dPhis", "ls_dPhiChanges", "ls_dAlphaInners", "ls_dAlphaOuters", "ls_dAlphaInnerOuters"]
 MD_VARS = ["md_anchor_x", "md_anchor_y", "md_anchor_z", "md_other_x", "md_other_y", "md_other_z", "md_dphi", "md_dphichange", "md_dz"]
@@ -36,7 +38,11 @@ class GraphBuilder:
     def process_event(self, event_data, idx, args):
         """Processes a single event and saves the graph."""
         try:
-            output_file = os.path.join(self.output_path, f"graph_{idx}.pt")
+            if random.random() < self.train_split:
+                output_file = os.path.join(self.train_path, f"graph_{idx}.pt")
+            else:
+                output_file = os.path.join(self.val_path, f"graph_{idx}.pt")
+
             if args.debug:
                 ...
             elif ((not args.overwrite) and os.path.exists(output_file)):
@@ -51,11 +57,9 @@ class GraphBuilder:
 
             if args.nofakes:
                 fake_mask = ak.to_dataframe(event_data[FAKE_TARGET]).values.flatten() == 0
-
                 node_features = torch.Tensor(ak.concatenate([ls_features[fake_mask], md_features[fake_mask]], axis=1))
                 target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)[fake_mask]
                 target_flat = target.flatten()
-
 
             else:
                 node_features = torch.Tensor(ak.concatenate([ls_features, md_features], axis=1))
