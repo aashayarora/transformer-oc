@@ -1,9 +1,10 @@
 __pycache__/
-*.log
-*.tmp
+.vscode/
 .DS_Store
 .env
-nohup.out
-data/
+*.log
+*.tmp
+data/*
 !data/processing.py
 output/
+nohup.out
