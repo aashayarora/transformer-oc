@@ -8,7 +8,7 @@
 
   "hidden_dim": 128,
   "num_layers": 4,
-  "nhead": 8,
+  "nhead": 16,
   "latent_dim": 64,
   "dropout": 0.1,
   
@@ -19,7 +19,7 @@
   
   "learning_rate": 0.001,
   "weight_decay": 0.00001,
-  "batch_size": 1,
+  "batch_size": 64,
   "epochs": 20,
   "num_workers": 4,
   "num_cpu_threads": 64,
@@ -31,5 +31,11 @@
   "save_every": 10,
   "resume": null,
 
-  "seed": 42
+  "seed": 42,
+
+  "oc_repulsive_chunk_size": 64,
+  "oc_repulsive_distance_cutoff": null,
+  "oc_use_checkpointing": false,
+  "oc_q_min": 0.1,
+  "oc_s_B": 1.0
 }

@@ -15,7 +15,6 @@ hep.style.use(hep.style.ROOT)
 def run_inference_and_clustering(data, model, device, eps=0.2):
     x = data.x.to(device)
     batch = data.batch.to(device)
-    # Extract eta and phi coordinates from features (columns 1 and 2)
     coords = data.x[:, 1:3].to(device)
     
     model.eval()
@@ -24,168 +23,119 @@ def run_inference_and_clustering(data, model, device, eps=0.2):
     cluster = DBSCAN(eps=eps, min_samples=2).fit(X)
     return cluster
 
-def calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_threshold=0.75):
+def calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_threshold=0.75, eta_cut=None):
     sim_features = data.sim_features
     truth_labels = data.sim_index.cpu().detach().numpy().flatten()
-    
-    unique_truth_labels = [x for x in set(truth_labels) if x >= 0]
-    unique_pred_labels = [x for x in set(cluster_labels) if x >= 0]
     
     n_bins_pt = len(pt_bins) - 1
     n_bins_eta = len(eta_bins) - 1
     
+    hist_eff_num_pt = np.zeros(n_bins_pt)
+    hist_eff_den_pt = np.zeros(n_bins_pt)
+    hist_eff_num_eta = np.zeros(n_bins_eta)
+    hist_eff_den_eta = np.zeros(n_bins_eta)
+    hist_fake_num_pt = np.zeros(n_bins_pt)
+    hist_fake_num_eta = np.zeros(n_bins_eta)
+    hist_tracks_pt = np.zeros(n_bins_pt)
+    hist_tracks_eta = np.zeros(n_bins_eta)
+    hist_purity_sum_pt = np.zeros(n_bins_pt)
+    hist_purity_sum_eta = np.zeros(n_bins_eta)
+    hist_purity_count_pt = np.zeros(n_bins_pt)
+    hist_purity_count_eta = np.zeros(n_bins_eta)
+    hist_dup_num_pt = np.zeros(n_bins_pt)
+    hist_dup_num_eta = np.zeros(n_bins_eta)
+    
     correctly_reconstructed_sim = set()
-    sim_to_pred_clusters = {}  # Track which sim particles have multiple reconstructed tracks
-    efficiency_numerator_pt = np.zeros(n_bins_pt)
-    efficiency_numerator_eta = np.zeros(n_bins_eta)
-    efficiency_denominator_pt = np.zeros(n_bins_pt)
-    efficiency_denominator_eta = np.zeros(n_bins_eta)
+    sim_to_pred_clusters = {}  
     
-    fake_rate_pt = np.zeros(n_bins_pt)
-    fake_rate_eta = np.zeros(n_bins_eta)
-    total_tracks_pt = np.zeros(n_bins_pt)
-    total_tracks_eta = np.zeros(n_bins_eta)
-    
-    purity_sum_pt = np.zeros(n_bins_pt)
-    purity_sum_eta = np.zeros(n_bins_eta)
-    purity_count_pt = np.zeros(n_bins_pt)
-    purity_count_eta = np.zeros(n_bins_eta)
-    
-    duplicate_rate_pt = np.zeros(n_bins_pt)
-    duplicate_rate_eta = np.zeros(n_bins_eta)
+    unique_pred_labels = np.unique(cluster_labels[cluster_labels >= 0])
     
     for pred_label in unique_pred_labels:
-        pred_cluster_indices = np.where(cluster_labels == pred_label)[0]
+        mask = cluster_labels == pred_label
+        truth_in_cluster = truth_labels[mask]
+        truth_no_fake = truth_in_cluster[truth_in_cluster >= 0]
         
-        if len(pred_cluster_indices) == 0:
-            continue
-            
-        truth_labels_in_cluster = truth_labels[pred_cluster_indices]
-        truth_labels_no_fake = truth_labels_in_cluster[truth_labels_in_cluster >= 0]
-        
-        if len(truth_labels_no_fake) == 0:
-            is_fake = True
-            track_pt = 1.0
-            track_eta = 0.0
-            purity = 0.0
+        if len(truth_no_fake) == 0:
+            is_fake, purity = True, 0.0
+            track_pt = track_eta = -999.0
         else:
-            unique_labels, counts = np.unique(truth_labels_no_fake, return_counts=True)
+            unique_labels, counts = np.unique(truth_no_fake, return_counts=True)
             majority_label = int(unique_labels[np.argmax(counts)])
-            
-            n_correct = np.sum(truth_labels_in_cluster == majority_label)
-            n_total = len(pred_cluster_indices)
-            purity = n_correct / n_total
-            
+            purity = np.sum(truth_in_cluster == majority_label) / len(truth_in_cluster)
             is_fake = purity < purity_threshold
             
-            if purity >= purity_threshold:
+            if not is_fake:
                 correctly_reconstructed_sim.add(majority_label)
-                # Track duplicates: record which sim particles have been reconstructed
-                if majority_label not in sim_to_pred_clusters:
-                    sim_to_pred_clusters[majority_label] = []
-                sim_to_pred_clusters[majority_label].append(pred_label)
+                sim_to_pred_clusters.setdefault(majority_label, []).append(pred_label)
             
             if majority_label < len(sim_features):
                 track_pt = float(sim_features[majority_label][0])
                 track_eta = float(sim_features[majority_label][1])
             else:
-                track_pt = 1.0
-                track_eta = 0.0
+                track_pt = track_eta = -999.0
         
-        # Bin the track
-        pt_bin_idx = int(np.digitize(track_pt, pt_bins) - 1)
-        eta_bin_idx = int(np.digitize(track_eta, eta_bins) - 1)
+        pt_bin = np.digitize(track_pt, pt_bins) - 1
+        eta_bin = np.digitize(track_eta, eta_bins) - 1
         
-        if 0 <= pt_bin_idx < n_bins_pt:
-            total_tracks_pt[pt_bin_idx] += 1
+        if 0 <= pt_bin < n_bins_pt:
+            hist_tracks_pt[pt_bin] += 1
             if is_fake:
-                fake_rate_pt[pt_bin_idx] += 1
+                hist_fake_num_pt[pt_bin] += 1
+            else:
+                hist_purity_sum_pt[pt_bin] += purity
+                hist_purity_count_pt[pt_bin] += 1
                 
-        if 0 <= eta_bin_idx < n_bins_eta:
-            total_tracks_eta[eta_bin_idx] += 1
+        if 0 <= eta_bin < n_bins_eta:
+            hist_tracks_eta[eta_bin] += 1
             if is_fake:
-                fake_rate_eta[eta_bin_idx] += 1
-        
-        if not is_fake and len(truth_labels_no_fake) > 0:
-            if 0 <= pt_bin_idx < n_bins_pt:
-                purity_sum_pt[pt_bin_idx] += purity
-                purity_count_pt[pt_bin_idx] += 1
-                
-            if 0 <= eta_bin_idx < n_bins_eta:
-                purity_sum_eta[eta_bin_idx] += purity
-                purity_count_eta[eta_bin_idx] += 1
+                hist_fake_num_eta[eta_bin] += 1
+            else:
+                hist_purity_sum_eta[eta_bin] += purity
+                hist_purity_count_eta[eta_bin] += 1
     
-    for sim_label in unique_truth_labels:
-        sim_label = int(sim_label)
-        
-        if sim_label >= len(sim_features):
-            continue
-            
-        sim_pt = float(sim_features[sim_label][0])
-        sim_eta = float(sim_features[sim_label][1])
-        
-        pt_bin_idx = int(np.digitize(sim_pt, pt_bins) - 1)
-        eta_bin_idx = int(np.digitize(sim_eta, eta_bins) - 1)
-        
-        if 0 <= pt_bin_idx < n_bins_pt:
-            efficiency_denominator_pt[pt_bin_idx] += 1
-            
-        if 0 <= eta_bin_idx < n_bins_eta:
-            efficiency_denominator_eta[eta_bin_idx] += 1
+    unique_truth_labels = np.unique(truth_labels[truth_labels >= 0])
     
-    for sim_label in unique_truth_labels:
-        sim_label = int(sim_label)
-        
-        if sim_label >= len(sim_features):
-            continue
-            
-        sim_pt = float(sim_features[sim_label][0])
-        sim_eta = float(sim_features[sim_label][1])
-        
-        is_correctly_reconstructed = int(sim_label in correctly_reconstructed_sim)
-        
-        pt_bin_idx = int(np.digitize(sim_pt, pt_bins) - 1)
-        eta_bin_idx = int(np.digitize(sim_eta, eta_bins) - 1)
-        
-        if 0 <= pt_bin_idx < n_bins_pt:
-            efficiency_numerator_pt[pt_bin_idx] += is_correctly_reconstructed
-            
-        if 0 <= eta_bin_idx < n_bins_eta:
-            efficiency_numerator_eta[eta_bin_idx] += is_correctly_reconstructed
+    valid_sim_mask = unique_truth_labels < len(sim_features)
+    valid_sim_labels = unique_truth_labels[valid_sim_mask].astype(int)
+    sim_pts = np.array([float(sim_features[i][0]) for i in valid_sim_labels])
+    sim_etas = np.array([float(sim_features[i][1]) for i in valid_sim_labels])
+    sim_reconstructed = np.array([int(i in correctly_reconstructed_sim) for i in valid_sim_labels])
+    sim_duplicated = np.array([int(len(sim_to_pred_clusters.get(i, [])) > 1) for i in valid_sim_labels])
     
-    # Calculate duplicate rates: count sim particles with multiple reconstructed tracks
-    for sim_label, pred_clusters in sim_to_pred_clusters.items():
-        if len(pred_clusters) > 1:  # This sim particle has duplicates
-            if sim_label < len(sim_features):
-                sim_pt = float(sim_features[sim_label][0])
-                sim_eta = float(sim_features[sim_label][1])
-                
-                pt_bin_idx = int(np.digitize(sim_pt, pt_bins) - 1)
-                eta_bin_idx = int(np.digitize(sim_eta, eta_bins) - 1)
-                
-                if 0 <= pt_bin_idx < n_bins_pt:
-                    duplicate_rate_pt[pt_bin_idx] += 1
-                    
-                if 0 <= eta_bin_idx < n_bins_eta:
-                    duplicate_rate_eta[eta_bin_idx] += 1
+    if eta_cut is not None:
+        eta_min, eta_max = eta_cut
+        in_acceptance = (sim_etas >= eta_min) & (sim_etas <= eta_max)
+    else:
+        in_acceptance = np.ones(len(sim_etas), dtype=bool)
+    
+    pt_bins_idx = np.digitize(sim_pts[in_acceptance], pt_bins) - 1
+    valid_pt = (pt_bins_idx >= 0) & (pt_bins_idx < n_bins_pt)
+    np.add.at(hist_eff_den_pt, pt_bins_idx[valid_pt], 1)
+    np.add.at(hist_eff_num_pt, pt_bins_idx[valid_pt], sim_reconstructed[in_acceptance][valid_pt])
+    np.add.at(hist_dup_num_pt, pt_bins_idx[valid_pt], sim_duplicated[in_acceptance][valid_pt])
+    
+    eta_bins_idx = np.digitize(sim_etas, eta_bins) - 1
+    valid_eta = (eta_bins_idx >= 0) & (eta_bins_idx < n_bins_eta)
+    np.add.at(hist_eff_den_eta, eta_bins_idx[valid_eta], 1)
+    np.add.at(hist_eff_num_eta, eta_bins_idx[valid_eta], sim_reconstructed[valid_eta])
+    np.add.at(hist_dup_num_eta, eta_bins_idx[valid_eta], sim_duplicated[valid_eta])
     
     return {
-        'efficiency_numerator_pt': efficiency_numerator_pt,
-        'efficiency_numerator_eta': efficiency_numerator_eta,
-        'efficiency_denominator_pt': efficiency_denominator_pt,
-        'efficiency_denominator_eta': efficiency_denominator_eta,
-        'fake_rate_numerator_pt': fake_rate_pt,  # Raw fake count
-        'fake_rate_numerator_eta': fake_rate_eta,  # Raw fake count
-        'purity_sum_pt': purity_sum_pt,
-        'purity_sum_eta': purity_sum_eta,
-        'total_tracks_pt': total_tracks_pt,
-        'total_tracks_eta': total_tracks_eta,
-        'purity_count_pt': purity_count_pt,
-        'purity_count_eta': purity_count_eta,
-        'duplicate_rate_numerator_pt': duplicate_rate_pt,
-        'duplicate_rate_numerator_eta': duplicate_rate_eta
+        'efficiency_numerator_pt': hist_eff_num_pt,
+        'efficiency_numerator_eta': hist_eff_num_eta,
+        'efficiency_denominator_pt': hist_eff_den_pt,
+        'efficiency_denominator_eta': hist_eff_den_eta,
+        'fake_rate_numerator_pt': hist_fake_num_pt,
+        'fake_rate_numerator_eta': hist_fake_num_eta,
+        'purity_sum_pt': hist_purity_sum_pt,
+        'purity_sum_eta': hist_purity_sum_eta,
+        'total_tracks_pt': hist_tracks_pt,
+        'total_tracks_eta': hist_tracks_eta,
+        'purity_count_pt': hist_purity_count_pt,
+        'purity_count_eta': hist_purity_count_eta,
+        'duplicate_rate_numerator_pt': hist_dup_num_pt,
+        'duplicate_rate_numerator_eta': hist_dup_num_eta
     }
-
 
 def plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, output_path, epsilon):
     fig, axes = plt.subplots(2, 4, figsize=(24, 10))

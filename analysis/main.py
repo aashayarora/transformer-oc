@@ -101,23 +101,26 @@ def main():
     print(f"PT bins: {len(pt_bins)-1} bins from {pt_bins[0]:.2f} to {pt_bins[-1]:.2f} GeV")
     print(f"Eta bins: {len(eta_bins)-1} bins from {eta_bins[0]:.2f} to {eta_bins[-1]:.2f}")
 
-    # Change efficiency variables to track numerator/denominator
-    total_efficiency_num_pt = np.zeros(len(pt_bins) - 1)
-    total_efficiency_num_eta = np.zeros(len(eta_bins) - 1)
-    total_efficiency_den_pt = np.zeros(len(pt_bins) - 1)
-    total_efficiency_den_eta = np.zeros(len(eta_bins) - 1)
-    total_fake_rate_num_pt = np.zeros(len(pt_bins) - 1)
-    total_fake_rate_num_eta = np.zeros(len(eta_bins) - 1)
-    total_fake_rate_den_pt = np.zeros(len(pt_bins) - 1)
-    total_fake_rate_den_eta = np.zeros(len(eta_bins) - 1)
-    total_purity_sum_pt = np.zeros(len(pt_bins) - 1)
-    total_purity_sum_eta = np.zeros(len(eta_bins) - 1)
-    total_purity_count_pt = np.zeros(len(pt_bins) - 1)
-    total_purity_count_eta = np.zeros(len(eta_bins) - 1)
-    total_duplicate_rate_num_pt = np.zeros(len(pt_bins) - 1)
-    total_duplicate_rate_num_eta = np.zeros(len(eta_bins) - 1)
+    hist_eff_num_pt = np.zeros(len(pt_bins) - 1)
+    hist_eff_den_pt = np.zeros(len(pt_bins) - 1)
+    hist_eff_num_eta = np.zeros(len(eta_bins) - 1)
+    hist_eff_den_eta = np.zeros(len(eta_bins) - 1)
+    
+    hist_fake_num_pt = np.zeros(len(pt_bins) - 1)
+    hist_fake_den_pt = np.zeros(len(pt_bins) - 1)
+    hist_fake_num_eta = np.zeros(len(eta_bins) - 1)
+    hist_fake_den_eta = np.zeros(len(eta_bins) - 1)
+    
+    hist_purity_sum_pt = np.zeros(len(pt_bins) - 1)
+    hist_purity_count_pt = np.zeros(len(pt_bins) - 1)
+    hist_purity_sum_eta = np.zeros(len(eta_bins) - 1)
+    hist_purity_count_eta = np.zeros(len(eta_bins) - 1)
+    
+    hist_dup_num_pt = np.zeros(len(pt_bins) - 1)
+    hist_dup_num_eta = np.zeros(len(eta_bins) - 1)
 
     print(f"Processing {len(data_loader)} events with epsilon = {args.epsilon}")
+    eta_cut = (-2.5, 2.5)
     
     for i, data in enumerate(data_loader):
         if i % 10 == 0:
@@ -125,75 +128,60 @@ def main():
             
         cluster = run_inference_and_clustering(data, model, device, eps=args.epsilon)
         cluster_labels = cluster.labels_
+        metrics = calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, eta_cut=eta_cut)
 
-        metrics = calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins)
+        # Simply accumulate histograms
+        hist_eff_num_pt += metrics['efficiency_numerator_pt']
+        hist_eff_den_pt += metrics['efficiency_denominator_pt']
+        hist_eff_num_eta += metrics['efficiency_numerator_eta']
+        hist_eff_den_eta += metrics['efficiency_denominator_eta']
+        
+        hist_fake_num_pt += metrics['fake_rate_numerator_pt']
+        hist_fake_den_pt += metrics['total_tracks_pt']
+        hist_fake_num_eta += metrics['fake_rate_numerator_eta']
+        hist_fake_den_eta += metrics['total_tracks_eta']
+        
+        hist_purity_sum_pt += metrics['purity_sum_pt']
+        hist_purity_count_pt += metrics['purity_count_pt']
+        hist_purity_sum_eta += metrics['purity_sum_eta']
+        hist_purity_count_eta += metrics['purity_count_eta']
+        
+        hist_dup_num_pt += metrics['duplicate_rate_numerator_pt']
+        hist_dup_num_eta += metrics['duplicate_rate_numerator_eta']
 
-        total_efficiency_num_pt += metrics['efficiency_numerator_pt']
-        total_efficiency_num_eta += metrics['efficiency_numerator_eta']
-        total_efficiency_den_pt += metrics['efficiency_denominator_pt']
-        total_efficiency_den_eta += metrics['efficiency_denominator_eta']
-        
-        total_fake_rate_num_pt += metrics['fake_rate_numerator_pt']
-        total_fake_rate_num_eta += metrics['fake_rate_numerator_eta']
-        total_fake_rate_den_pt += metrics['total_tracks_pt']
-        total_fake_rate_den_eta += metrics['total_tracks_eta']
-        
-        total_purity_sum_pt += metrics['purity_sum_pt']
-        total_purity_sum_eta += metrics['purity_sum_eta']
-        total_purity_count_pt += metrics['purity_count_pt']
-        total_purity_count_eta += metrics['purity_count_eta']
-        
-        total_duplicate_rate_num_pt += metrics['duplicate_rate_numerator_pt']
-        total_duplicate_rate_num_eta += metrics['duplicate_rate_numerator_eta']
-
-    n_events = len(data_loader)
+    def binomial_error(num, den):
+        err = np.sqrt(num * (den - num) / np.power(den, 3, where=den>0))
+        return np.where(den > 0, err, 0)
     
-    avg_efficiency_pt = np.divide(total_efficiency_num_pt, total_efficiency_den_pt, 
-                                 out=np.zeros_like(total_efficiency_num_pt), where=total_efficiency_den_pt!=0)
-    avg_efficiency_eta = np.divide(total_efficiency_num_eta, total_efficiency_den_eta, 
-                                  out=np.zeros_like(total_efficiency_num_eta), where=total_efficiency_den_eta!=0)
+    eff_pt = np.divide(hist_eff_num_pt, hist_eff_den_pt, out=np.zeros_like(hist_eff_num_pt), where=hist_eff_den_pt!=0)
+    eff_eta = np.divide(hist_eff_num_eta, hist_eff_den_eta, out=np.zeros_like(hist_eff_num_eta), where=hist_eff_den_eta!=0)
     
-    eff_err_pt = np.sqrt(total_efficiency_num_pt * (total_efficiency_den_pt - total_efficiency_num_pt) / total_efficiency_den_pt**3)
-    eff_err_pt = np.where(total_efficiency_den_pt > 0, eff_err_pt, 0)
-    eff_err_eta = np.sqrt(total_efficiency_num_eta * (total_efficiency_den_eta - total_efficiency_num_eta) / total_efficiency_den_eta**3)
-    eff_err_eta = np.where(total_efficiency_den_eta > 0, eff_err_eta, 0)
+    fake_pt = np.divide(hist_fake_num_pt, hist_fake_den_pt, out=np.zeros_like(hist_fake_num_pt), where=hist_fake_den_pt!=0)
+    fake_eta = np.divide(hist_fake_num_eta, hist_fake_den_eta, out=np.zeros_like(hist_fake_num_eta), where=hist_fake_den_eta!=0)
     
-    avg_fake_rate_pt = np.divide(total_fake_rate_num_pt, total_fake_rate_den_pt, 
-                                out=np.zeros_like(total_fake_rate_num_pt), where=total_fake_rate_den_pt!=0)
-    avg_fake_rate_eta = np.divide(total_fake_rate_num_eta, total_fake_rate_den_eta, 
-                                 out=np.zeros_like(total_fake_rate_num_eta), where=total_fake_rate_den_eta!=0)
+    purity_pt = np.divide(hist_purity_sum_pt, hist_purity_count_pt, out=np.zeros_like(hist_purity_sum_pt), where=hist_purity_count_pt!=0)
+    purity_eta = np.divide(hist_purity_sum_eta, hist_purity_count_eta, out=np.zeros_like(hist_purity_sum_eta), where=hist_purity_count_eta!=0)
     
-    fake_err_pt = np.sqrt(total_fake_rate_num_pt * (total_fake_rate_den_pt - total_fake_rate_num_pt) / total_fake_rate_den_pt**3)
-    fake_err_pt = np.where(total_fake_rate_den_pt > 0, fake_err_pt, 0)
-    fake_err_eta = np.sqrt(total_fake_rate_num_eta * (total_fake_rate_den_eta - total_fake_rate_num_eta) / total_fake_rate_den_eta**3)
-    fake_err_eta = np.where(total_fake_rate_den_eta > 0, fake_err_eta, 0)
+    dup_pt = np.divide(hist_dup_num_pt, hist_eff_den_pt, out=np.zeros_like(hist_dup_num_pt), where=hist_eff_den_pt!=0)
+    dup_eta = np.divide(hist_dup_num_eta, hist_eff_den_eta, out=np.zeros_like(hist_dup_num_eta), where=hist_eff_den_eta!=0)
     
-    avg_purity_pt = np.divide(total_purity_sum_pt, total_purity_count_pt, 
-                             out=np.zeros_like(total_purity_sum_pt), where=total_purity_count_pt!=0)
-    avg_purity_eta = np.divide(total_purity_sum_eta, total_purity_count_eta, 
-                              out=np.zeros_like(total_purity_sum_eta), where=total_purity_count_eta!=0)
+    eff_err_pt = binomial_error(hist_eff_num_pt, hist_eff_den_pt)
+    eff_err_eta = binomial_error(hist_eff_num_eta, hist_eff_den_eta)
+    fake_err_pt = binomial_error(hist_fake_num_pt, hist_fake_den_pt)
+    fake_err_eta = binomial_error(hist_fake_num_eta, hist_fake_den_eta)
+    dup_err_pt = binomial_error(hist_dup_num_pt, hist_eff_den_pt)
+    dup_err_eta = binomial_error(hist_dup_num_eta, hist_eff_den_eta)
     
-    purity_err_pt = np.sqrt(avg_purity_pt * (1 - avg_purity_pt) / total_purity_count_pt)
-    purity_err_pt = np.where(total_purity_count_pt > 0, purity_err_pt, 0)
-    purity_err_eta = np.sqrt(avg_purity_eta * (1 - avg_purity_eta) / total_purity_count_eta)
-    purity_err_eta = np.where(total_purity_count_eta > 0, purity_err_eta, 0)
-    
-    # Duplicate rate: number of duplicated sim particles / total sim particles
-    avg_duplicate_rate_pt = np.divide(total_duplicate_rate_num_pt, total_efficiency_den_pt,
-                                     out=np.zeros_like(total_duplicate_rate_num_pt), where=total_efficiency_den_pt!=0)
-    avg_duplicate_rate_eta = np.divide(total_duplicate_rate_num_eta, total_efficiency_den_eta,
-                                      out=np.zeros_like(total_duplicate_rate_num_eta), where=total_efficiency_den_eta!=0)
-    
-    dup_err_pt = np.sqrt(total_duplicate_rate_num_pt * (total_efficiency_den_pt - total_duplicate_rate_num_pt) / total_efficiency_den_pt**3)
-    dup_err_pt = np.where(total_efficiency_den_pt > 0, dup_err_pt, 0)
-    dup_err_eta = np.sqrt(total_duplicate_rate_num_eta * (total_efficiency_den_eta - total_duplicate_rate_num_eta) / total_efficiency_den_eta**3)
-    dup_err_eta = np.where(total_efficiency_den_eta > 0, dup_err_eta, 0)
+    purity_err_pt = np.sqrt(purity_pt * (1 - purity_pt) / hist_purity_count_pt)
+    purity_err_pt = np.where(hist_purity_count_pt > 0, purity_err_pt, 0)
+    purity_err_eta = np.sqrt(purity_eta * (1 - purity_eta) / hist_purity_count_eta)
+    purity_err_eta = np.where(hist_purity_count_eta > 0, purity_err_eta, 0)
 
     metrics_pt = {
-        'efficiency': avg_efficiency_pt,
-        'fake_rate': avg_fake_rate_pt,
-        'purity': avg_purity_pt,
-        'duplicate_rate': avg_duplicate_rate_pt,
+        'efficiency': eff_pt,
+        'fake_rate': fake_pt,
+        'purity': purity_pt,
+        'duplicate_rate': dup_pt,
         'efficiency_err': eff_err_pt,
         'fake_rate_err': fake_err_pt,
         'purity_err': purity_err_pt,
@@ -201,10 +189,10 @@ def main():
     }
     
     metrics_eta = {
-        'efficiency': avg_efficiency_eta,
-        'fake_rate': avg_fake_rate_eta,
-        'purity': avg_purity_eta,
-        'duplicate_rate': avg_duplicate_rate_eta,
+        'efficiency': eff_eta,
+        'fake_rate': fake_eta,
+        'purity': purity_eta,
+        'duplicate_rate': dup_eta,
         'efficiency_err': eff_err_eta,
         'fake_rate_err': fake_err_eta,
         'purity_err': purity_err_eta,
@@ -217,12 +205,12 @@ def main():
     print("PERFORMANCE SUMMARY")
     print("="*60)
     print(f"Epsilon: {args.epsilon}")
-    print(f"Events processed: {n_events}")
+    print(f"Events processed: {len(data_loader)}")
     print(f"Output directory: {args.output}")
     print("\nOverall averages:")
-    print(f"  Efficiency: {np.mean(avg_efficiency_pt[avg_efficiency_pt > 0]):.3f}")
-    print(f"  Fake Rate: {np.mean(avg_fake_rate_pt[avg_fake_rate_pt > 0]):.3f}")
-    print(f"  Purity: {np.mean(avg_purity_pt[avg_purity_pt > 0]):.3f}")
+    print(f"  Efficiency: {np.mean(eff_pt[eff_pt > 0]):.3f}")
+    print(f"  Fake Rate: {np.mean(fake_pt[fake_pt > 0]):.3f}")
+    print(f"  Purity: {np.mean(purity_pt[purity_pt > 0]):.3f}")
 
     print(f"Plots saved to: {args.output}/")
 
