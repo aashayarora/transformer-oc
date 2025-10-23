@@ -33,13 +33,13 @@ class GraphBuilder:
 
         self.input_tree = uproot.open(input_path)["tree"]
 
-    def process_event(self, event_data, idx, debug=False, overwrite=False):
+    def process_event(self, event_data, idx, args):
         """Processes a single event and saves the graph."""
         try:
             output_file = os.path.join(self.output_path, f"graph_{idx}.pt")
-            if debug:
+            if args.debug:
                 ...
-            elif ((not overwrite) and os.path.exists(output_file)):
+            elif ((not args.overwrite) and os.path.exists(output_file)):
                 print(f"Graph {idx} already exists, skipping...")
                 return
             
@@ -49,19 +49,25 @@ class GraphBuilder:
 
             md_features = md_features.reshape(-1, 2 * len(MD_VARS))
 
-            fake_mask = ak.to_dataframe(event_data[FAKE_TARGET]).values.flatten() == 0
+            if args.nofakes:
+                fake_mask = ak.to_dataframe(event_data[FAKE_TARGET]).values.flatten() == 0
 
-            node_features = torch.Tensor(ak.concatenate([ls_features[fake_mask], md_features[fake_mask]], axis=1))
-            target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)[fake_mask]
+                node_features = torch.Tensor(ak.concatenate([ls_features[fake_mask], md_features[fake_mask]], axis=1))
+                target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)[fake_mask]
+                target_flat = target.flatten()
 
-            target_flat = target.flatten()
-            # target_flat[target_flat < 0] = -999999
+
+            else:
+                node_features = torch.Tensor(ak.concatenate([ls_features, md_features], axis=1))
+                target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)
+                target_flat = target.flatten()
+                target_flat[target_flat < 0] = -999999
             
             sim_features = torch.Tensor(ak.to_dataframe(event_data[SIM_VARS]).values)
 
             graph = Data(x=node_features, sim_index=target_flat, sim_features=sim_features)
 
-            if debug:
+            if args.debug:
                 print(graph)
                 return
 
@@ -71,18 +77,18 @@ class GraphBuilder:
         except Exception as e:
             print(f"Error processing graph {idx}: {e}")
 
-    def process_events_in_parallel(self, n_workers, n_events, debug=False, overwrite=False):
-        num_events = self.input_tree.num_entries if n_events == -1 else n_events
-        if debug:
+    def process_events_in_parallel(self, args):
+        num_events = self.input_tree.num_entries if args.n_events == -1 else args.n_events
+        if args.debug:
             num_events = 1
-        n_workers =  min(n_workers, os.cpu_count() // 2) if not debug else 1
-
+        n_workers =  min(args.n_workers, os.cpu_count() // 2) if not args.debug else 1
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
             for idx in range(num_events):
                 executor.submit(
                     self.process_event,
                     self.input_tree.arrays(ALL_COLUMNS, entry_start=idx, entry_stop=idx + 1),
-                    idx, debug, overwrite
+                    idx, 
+                    args
                 )
 
 
@@ -95,10 +101,11 @@ if __name__ == "__main__":
     argparser.add_argument("--overwrite", action="store_true", help="Overwrite existing graphs")
     argparser.add_argument("--n_events", type=int, default=-1, help="Maximum number of events to process (-1 for all)")
     argparser.add_argument("--split", type=float, default=0.8, help="Train/val split ratio")
+    argparser.add_argument("--nofakes", action="store_true", help="Exclude fake hits from the graphs")
     args = argparser.parse_args()
 
     if not os.path.exists(args.output):
         os.makedirs(args.output)
     
     training_data = GraphBuilder(args.input, args.output, args.split)
-    training_data.process_events_in_parallel(args.n_workers, args.n_events, args.debug, args.overwrite)
+    training_data.process_events_in_parallel(args)
