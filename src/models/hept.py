@@ -3,12 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-from fastgraphcompute.object_condensation import ObjectCondensation
+from utils.object_condensation import ObjectCondensation
 from fastgraphcompute.torch_geometric_interface import row_splits_from_strict_batch as batch_to_rowsplits
 
 import pytorch_lightning as pl
 
-from utils import HEPTAttention, get_regions, prepare_input
+from src.utils.hept_utils import HEPTAttention, get_regions, prepare_input
 
 class Attn(nn.Module):
     def __init__(self, coords_dim, **kwargs):
@@ -118,7 +118,7 @@ class HEPTOCModel(nn.Module):
 
         encoded_x = self.feat_encoder(x)
         all_encoded_x = [encoded_x]
-        
+                
         for i in range(self.n_layers):
             encoded_x = self.attns[i](encoded_x, kwargs)
             all_encoded_x.append(encoded_x)
@@ -160,7 +160,14 @@ class HEPTOCLightningModule(pl.LightningModule):
         self.weight_decay = config['weight_decay']
         self.scheduler_patience = config['scheduler_patience']
         
-        self.criterion = ObjectCondensation(q_min=0.1, s_B=1)
+        # Object Condensation with memory optimization settings
+        self.criterion = ObjectCondensation(
+            q_min=config.get('oc_q_min', 0.1),
+            s_B=config.get('oc_s_B', 1.0),
+            repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
+            repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
+            use_checkpointing=config.get('oc_use_checkpointing', False)
+        )
     
     def training_step(self, data):
         x, sim_index, batch = data.x.to(self.device), data.sim_index.to(self.device), data.batch.to(self.device)

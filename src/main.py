@@ -5,6 +5,8 @@ import json
 from train import Trainer
 from helpers import set_seed
 
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Graph Neural Network for Particle Tracking')
     

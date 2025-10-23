@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-from fastgraphcompute.object_condensation import ObjectCondensation
+from utils.object_condensation import ObjectCondensation
+# from fastgraphcompute.object_condensation import ObjectCondensation
 from fastgraphcompute.torch_geometric_interface import row_splits_from_strict_batch as batch_to_rowsplits
 
 import pytorch_lightning as pl
@@ -49,18 +50,46 @@ class TransformerOCModel(nn.Module):
 
     def forward(self, x, coords, batch):
         x = self.input_proj(x)
-        x = x.unsqueeze(1) 
-        x = self.transformer_encoder(x)
-        x = x.squeeze(1)
+        
+        batch_size = batch.max().item() + 1
+        device = x.device
+        
+        unique_batches, counts = torch.unique(batch, return_counts=True)
+        max_seq_len = counts.max().item()
+        
+        x_batched = torch.zeros(batch_size, max_seq_len, self.hidden_dim, device=device)
+        
+        for i in range(batch_size):
+            mask = batch == i
+            num_nodes = mask.sum().item()
+            x_batched[i, :num_nodes] = x[mask]
+        
+        x_batched = x_batched.transpose(0, 1)
+        
+        src_key_padding_mask = torch.ones(batch_size, max_seq_len, dtype=torch.bool, device=device)
+        
+        for i in range(batch_size):
+            mask = batch == i
+            num_nodes = mask.sum().item()
+            src_key_padding_mask[i, :num_nodes] = False
+        
+        x_transformed = self.transformer_encoder(x_batched, src_key_padding_mask=src_key_padding_mask)
+        
+        x_transformed = x_transformed.transpose(0, 1)
+        x_out = torch.zeros_like(x, device=device)
+        
+        for i in range(batch_size):
+            mask = batch == i
+            num_nodes = mask.sum().item()
+            x_out[mask] = x_transformed[i, :num_nodes]
 
-        coords_latent = self.latent_head(x)
+        coords_latent = self.latent_head(x_out)
 
         eps = 1e-6
-        beta = self.beta_head(x).sigmoid()
+        beta = self.beta_head(x_out).sigmoid()
         beta = torch.clamp(beta, eps, 1 - eps)
         
         return {"B": beta, "H": coords_latent}
-        
 
 class TransformerLightningModule(pl.LightningModule):
     def __init__(self, config, input_dim):
@@ -80,7 +109,13 @@ class TransformerLightningModule(pl.LightningModule):
         self.weight_decay = config['weight_decay']
         self.scheduler_patience = config['scheduler_patience']
         
-        self.criterion = ObjectCondensation(q_min=0.1, s_B=1)
+        self.criterion = ObjectCondensation(
+            q_min=config.get('oc_q_min', 0.1),
+            s_B=config.get('oc_s_B', 1.0),
+            repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
+            repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
+            use_checkpointing=config.get('oc_use_checkpointing', False)
+        )
     
     def training_step(self, data):
         x, sim_index, batch = data.x.to(self.device), data.sim_index.to(self.device), data.batch.to(self.device)
