@@ -45,7 +45,7 @@ class GraphBuilder:
 
             if args.debug:
                 ...
-            elif ((not args.overwrite) and os.path.exists(output_file)):
+            elif ((not args.overwrite) and (os.path.exists(os.path.join(self.train_path, f"graph_{idx}.pt")) or os.path.exists(os.path.join(self.val_path, f"graph_{idx}.pt")))):
                 print(f"Graph {idx} already exists, skipping...")
                 return
             
