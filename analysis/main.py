@@ -95,8 +95,8 @@ def main():
         print(f"Epsilon validation plots saved to: {args.output}/")
         return
 
-    pt_bins = np.linspace(0.5, 2, 40)
-    eta_bins = np.linspace(-4, 4, 40)
+    pt_bins = np.linspace(0.5, 2, 50)
+    eta_bins = np.linspace(-4, 4, 50)
 
     print(f"PT bins: {len(pt_bins)-1} bins from {pt_bins[0]:.2f} to {pt_bins[-1]:.2f} GeV")
     print(f"Eta bins: {len(eta_bins)-1} bins from {eta_bins[0]:.2f} to {eta_bins[-1]:.2f}")

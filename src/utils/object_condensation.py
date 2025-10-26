@@ -1,7 +1,7 @@
 import torch
 
 from fastgraphcompute.extensions.oc_helper import oc_helper_matrices, select_with_default
-from fastgraphcompute.torch_geometric_interface import strict_batch_from_row_splits
+from utils.torch_geometric_interface import strict_batch_from_row_splits
 
 def arctanhsq(x):
     return torch.arctanh(x)**2

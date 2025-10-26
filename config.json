@@ -1,6 +1,6 @@
 {
-  "train_data_dir": "./data/muonG/train",
-  "val_data_dir": "./data/muonG/val",
+  "train_data_dir": "./data/pu200/train",
+  "val_data_dir": "./data/pu200/val",
   "train_subset": null,
   "val_subset": null,
   
@@ -19,7 +19,7 @@
   
   "learning_rate": 0.001,
   "weight_decay": 0.00001,
-  "batch_size": 64,
+  "batch_size": 2,
   "epochs": 20,
   "num_workers": 4,
   "num_cpu_threads": 64,
