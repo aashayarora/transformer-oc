@@ -46,7 +46,8 @@ def calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_t
     hist_dup_num_eta = np.zeros(n_bins_eta)
     
     correctly_reconstructed_sim = set()
-    sim_to_pred_clusters = {}  
+    sim_to_pred_clusters = {}
+    cluster_sizes = []  # Store number of segments in each reconstructed cluster
     
     unique_pred_labels = np.unique(cluster_labels[cluster_labels >= 0])
     
@@ -54,6 +55,9 @@ def calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_t
         mask = cluster_labels == pred_label
         truth_in_cluster = truth_labels[mask]
         truth_no_fake = truth_in_cluster[truth_in_cluster >= 0]
+        
+        # Store the cluster size (number of segments)
+        cluster_sizes.append(np.sum(mask))
         
         if len(truth_no_fake) == 0:
             is_fake, purity = True, 0.0
@@ -134,7 +138,8 @@ def calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_t
         'purity_count_pt': hist_purity_count_pt,
         'purity_count_eta': hist_purity_count_eta,
         'duplicate_rate_numerator_pt': hist_dup_num_pt,
-        'duplicate_rate_numerator_eta': hist_dup_num_eta
+        'duplicate_rate_numerator_eta': hist_dup_num_eta,
+        'cluster_sizes': cluster_sizes
     }
 
 def plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, output_path, epsilon):
@@ -203,4 +208,22 @@ def plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, outp
     
     plt.tight_layout()
     plt.savefig(f"{output_path}/performance_metrics_eps_{epsilon:.3f}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_cluster_size_histogram(cluster_sizes, output_path, epsilon):
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    
+    cluster_sizes = np.array(cluster_sizes)
+
+    # Create histogram
+    bins = np.arange(0, 30, 1) - 0.5  # Center bins on integers
+    ax.hist(cluster_sizes, bins=bins, edgecolor='black', alpha=0.7, color='steelblue')
+    
+    ax.set_xlabel('Number of LSs per Cluster')
+    ax.set_ylabel('Number of Clusters')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_path}/cluster_size_eps_{epsilon:.3f}.png", dpi=300, bbox_inches='tight')
     plt.close()

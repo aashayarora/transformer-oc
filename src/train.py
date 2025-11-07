@@ -57,12 +57,12 @@ class Trainer:
         
         checkpoint_callback = ModelCheckpoint(
             dirpath=os.path.join(self.config['output_dir'], 'checkpoints'),
-            filename='model-{epoch:02d}-{val_loss:.2f}',
-            monitor='val_loss',
+            filename='model-{step:06d}-{train_loss:.2f}',
+            monitor='train_loss',
             mode='min',
             save_top_k=3,
             save_last=True,
-            every_n_epochs=self.config.get('save_every', 10),
+            every_n_train_steps=self.config.get('save_every', 100),
             save_on_train_epoch_end=False
         )
         
@@ -82,7 +82,8 @@ class Trainer:
             callbacks=[checkpoint_callback, early_stopping],
             logger=logger,
             accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-            devices=[1] if torch.cuda.is_available() else None,
+            devices=torch.cuda.device_count() if torch.cuda.is_available() else 1,
+            strategy='ddp_find_unused_parameters_true' if torch.cuda.device_count() > 1 else None,
             enable_progress_bar=True,
             log_every_n_steps=10,
             enable_checkpointing=True        

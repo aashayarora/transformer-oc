@@ -10,7 +10,7 @@ import sys
 sys.path.append('./src')
 
 from dataset import PCDataset
-from measures import calculate_tracking_metrics, run_inference_and_clustering, plot_performance_histograms
+from measures import calculate_tracking_metrics, run_inference_and_clustering, plot_performance_histograms, plot_cluster_size_histogram
 from validation import validate_model, make_epsilon_validation_plot
 
 def main():
@@ -30,7 +30,7 @@ def main():
         config['val_data_dir'], 
         subset=subset,
     )
-    data_loader = DataLoader(dataset, shuffle=False, batch_size=1, drop_last=False, num_workers=4)
+    data_loader = DataLoader(dataset, shuffle=False, batch_size=1, drop_last=False, num_workers=2)
     
     print(f"Loaded dataset with {len(dataset)} graphs")
 
@@ -119,6 +119,8 @@ def main():
     hist_dup_num_pt = np.zeros(len(pt_bins) - 1)
     hist_dup_num_eta = np.zeros(len(eta_bins) - 1)
 
+    all_cluster_sizes = []  # Collect cluster sizes from all events
+
     print(f"Processing {len(data_loader)} events with epsilon = {args.epsilon}")
     eta_cut = (-2.5, 2.5)
     
@@ -148,6 +150,9 @@ def main():
         
         hist_dup_num_pt += metrics['duplicate_rate_numerator_pt']
         hist_dup_num_eta += metrics['duplicate_rate_numerator_eta']
+        
+        # Collect cluster sizes
+        all_cluster_sizes.extend(metrics['cluster_sizes'])
 
     def binomial_error(num, den):
         err = np.sqrt(num * (den - num) / np.power(den, 3, where=den>0))
@@ -200,6 +205,15 @@ def main():
     }
 
     plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, args.output, args.epsilon)
+
+    # Plot cluster size histogram
+    if all_cluster_sizes:
+        plot_cluster_size_histogram(all_cluster_sizes, args.output, args.epsilon)
+        print(f"\nCluster size statistics:")
+        print(f"  Total clusters: {len(all_cluster_sizes)}")
+        print(f"  Mean cluster size: {np.mean(all_cluster_sizes):.2f}")
+        print(f"  Median cluster size: {np.median(all_cluster_sizes):.0f}")
+        print(f"  Min/Max cluster size: {min(all_cluster_sizes)}/{max(all_cluster_sizes)}")
 
     print("\n" + "="*60)
     print("PERFORMANCE SUMMARY")
