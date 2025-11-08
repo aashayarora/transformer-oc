@@ -86,7 +86,9 @@ class Trainer:
             strategy='ddp_find_unused_parameters_true' if torch.cuda.device_count() > 1 else None,
             enable_progress_bar=True,
             log_every_n_steps=10,
-            enable_checkpointing=True        
+            enable_checkpointing=True,
+            gradient_clip_val=self.config.get('gradient_clip_val', 1.0),
+            gradient_clip_algorithm=self.config.get('gradient_clip_algorithm', 'norm')
         )
         
         ckpt_path = None

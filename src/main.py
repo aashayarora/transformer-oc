@@ -43,6 +43,12 @@ def parse_args():
     parser.add_argument('--early_stopping_patience', type=int, default=20,
                        help='Early stopping patience')
     
+    parser.add_argument('--gradient_clip_val', type=float, default=1.0,
+                       help='Gradient clipping value (clips gradients by norm)')
+    parser.add_argument('--gradient_clip_algorithm', type=str, default='norm',
+                       choices=['norm', 'value'],
+                       help='Gradient clipping algorithm: "norm" clips by norm, "value" clips by value')
+    
     parser.add_argument('--output_dir', type=str, default='./output',
                        help='Directory to save output')
     parser.add_argument('--save_every', type=int, default=10,
