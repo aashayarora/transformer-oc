@@ -1,0 +1,82 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-tracking-tensorboard
+  namespace: cern-cms-gpu-tracking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-tracking-tensorboard
+  template:
+    metadata:
+      labels:
+        app: ml-tracking-tensorboard
+    spec:
+      containers:
+      - name: tensorboard
+        image: aaarora/tensorboard:latest
+        command: ["tensorboard"]
+        args: 
+          - "--logdir=/data/output"
+          - "--host=0.0.0.0"
+          - "--port=6006"
+          - "--reload_interval=30"
+        ports:
+        - containerPort: 6006
+          name: tensorboard
+          protocol: TCP
+        resources:
+          limits:
+            memory: 4Gi
+            cpu: 2
+          requests:
+            memory: 2Gi
+            cpu: 1
+        volumeMounts:
+        - mountPath: /data
+          name: ml-tracking-pvc
+          readOnly: true
+      volumes:
+        - name: ml-tracking-pvc
+          persistentVolumeClaim:
+            claimName: ml-tracking-pvc
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-tracking-tensorboard
+  namespace: cern-cms-gpu-tracking
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6006
+    targetPort: 6006
+    protocol: TCP
+    name: tensorboard
+  selector:
+    app: ml-tracking-tensorboard
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ml-tracking-tensorboard
+  namespace: cern-cms-gpu-tracking
+spec:
+  ingressClassName: haproxy
+  rules:
+  - host: ml-tracking-tensorboard.nrp-nautilus.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: ml-tracking-tensorboard
+            port:
+              number: 6006
+        path: /
+        pathType: ImplementationSpecific
+  tls:
+  - hosts:
+    - ml-tracking-tensorboard.nrp-nautilus.io

@@ -1,0 +1,12 @@
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: ml-tracking-pvc
+#   namespace: cern-cms-gpu-tracking
+# spec:
+#   storageClassName: rook-cephfs
+#   accessModes:
+#   - ReadWriteMany
+#   resources:
+#     requests:
+#       storage: 500Gi

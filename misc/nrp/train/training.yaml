@@ -1,0 +1,105 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-tracking-config
+  namespace: cern-cms-gpu-tracking
+data:
+  config.json: |
+    {
+      "train_data_dir": "/data/muonGun/train",
+      "val_data_dir": "/data/muonGun/val",
+      "train_subset": null,
+      "val_subset": null,
+      
+      "model": "transformer",
+
+      "hidden_dim": 128,
+      "num_layers": 4,
+      "nhead": 16,
+      "latent_dim": 64,
+      "dropout": 0.1,
+      
+      "block_size": 32,
+      "n_hashes": 4,
+      "num_regions": 8,
+      "num_w_per_dist": 8,
+      
+      "learning_rate": 5e-4,
+      "weight_decay": 1e-4,
+      "batch_size": 64,
+      "epochs": 20,
+      "num_workers": 4,
+      "num_cpu_threads": 64,
+      
+      "scheduler_gamma": 0.5,
+      "early_stopping_patience": 20,
+
+      "gradient_clip_val": 1.0,
+      "gradient_clip_algorithm": "norm",
+
+      "accumulate_grad_batches": 5,
+      
+      "output_dir": "/data/output/muonGun/",
+      "save_every": 50,
+      "resume": null,
+
+      "seed": 42,
+
+      "oc_repulsive_chunk_size": 128,
+      "oc_repulsive_distance_cutoff": 5.0,
+      "oc_use_checkpointing": false,
+      "oc_q_min": 0.1,
+      "oc_s_B": 1.0,
+
+      "gpus": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-tracking
+  namespace: cern-cms-gpu-tracking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-tracking
+  template:
+    metadata:
+      labels:
+        app: ml-tracking
+    spec:
+      containers:
+      - name: ml-tracking-container
+        image: aaarora/ml-tracking:latest
+        args: ["sleep", "infinity"]
+        resources:
+          limits:
+            memory: 32Gi
+            cpu: 12
+            nvidia.com/gpu: 1
+          requests:
+            memory: 16Gi
+            cpu: 8  
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - mountPath: /data
+          name: ml-tracking-pvc
+        - mountPath: /dev/shm
+          name: dshm
+        - mountPath: /home/config.json
+          subPath: config.json
+          name: ml-tracking-config-volume
+      volumes:
+        - name: ml-tracking-pvc
+          persistentVolumeClaim:
+            claimName: ml-tracking-pvc
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+        - name: ml-tracking-config-volume
+          configMap:
+            name: ml-tracking-config
+      restartPolicy: Always

@@ -2,11 +2,9 @@ import os
 import torch
 from torch_geometric.data import Dataset
 import glob
-import gc
-import hashlib
 
 class PCDataset(Dataset):
-    def __init__(self, data_dir, subset=None, compute_stats=True, cache_dir=None):
+    def __init__(self, data_dir, subset=None, compute_stats=True, cache_dir=None, stats_file=None):
         self.data_dir = data_dir
         self.subset = subset if subset is not None else float('inf')
 
@@ -16,27 +14,29 @@ class PCDataset(Dataset):
         if len(self.graph_files) == 0:
             raise ValueError(f"No graph files found in {data_dir}")
         
-        # Initialize statistics as None - will compute on-the-fly on first pass
+        # Initialize statistics
         self.mean = None
         self.std = None
         self.compute_stats = compute_stats
+        self._stats_finalized = False
         
-        # Welford's algorithm accumulators for on-the-fly computation
+        # Try to load precomputed statistics
+        if stats_file is not None:
+            if os.path.exists(stats_file):
+                print(f"Loading precomputed statistics from {stats_file}")
+                stats = torch.load(stats_file, map_location='cpu', weights_only=False)
+                self.mean = stats['mean']
+                self.std = stats['std']
+                self._stats_finalized = True
+                self.compute_stats = False
+                print(f"  Loaded stats for {stats['num_graphs']} graphs, {stats['num_nodes']} nodes")
+            else:
+                print(f"Warning: stats_file {stats_file} not found, will compute on-the-fly")
+        
+        # Welford's algorithm accumulators for on-the-fly computation (fallback)
         self._stats_count = 0
         self._stats_mean = None
         self._stats_M2 = None
-        self._stats_finalized = False
-        
-        # Initialize statistics as None - will compute on-the-fly on first pass
-        self.mean = None
-        self.std = None
-        self.compute_stats = compute_stats
-        
-        # Welford's algorithm accumulators for on-the-fly computation
-        self._stats_count = 0
-        self._stats_mean = None
-        self._stats_M2 = None
-        self._stats_finalized = False
         
     def _update_stats(self, x):
         """Update running statistics using Welford's online algorithm."""
