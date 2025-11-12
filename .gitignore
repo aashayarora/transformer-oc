@@ -5,6 +5,6 @@ __pycache__/
 *.log
 *.tmp
 data/*
-!data/processing.py
+!data/*.py
 output/
 nohup.out
