@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import MultiStepLR
 
 from utils.object_condensation import ObjectCondensation
 # from fastgraphcompute.object_condensation import ObjectCondensation
@@ -84,6 +84,9 @@ class TransformerOCModel(nn.Module):
             x_out[mask] = x_transformed[i, :num_nodes]
 
         coords_latent = self.latent_head(x_out)
+        
+        # Normalize latent coordinates to prevent them from growing unbounded
+        coords_latent = torch.nn.functional.normalize(coords_latent, p=2, dim=-1) * (self.latent_dim ** 0.5)
 
         eps = 1e-6
         beta = self.beta_head(x_out).sigmoid()
@@ -107,7 +110,7 @@ class TransformerLightningModule(pl.LightningModule):
 
         self.learning_rate = config['learning_rate']
         self.weight_decay = config['weight_decay']
-        self.scheduler_patience = config['scheduler_patience']
+        self.scheduler_gamma = config['scheduler_gamma']
         
         self.criterion = ObjectCondensation(
             q_min=config.get('oc_q_min', 0.1),
@@ -138,6 +141,10 @@ class TransformerLightningModule(pl.LightningModule):
         self.log('train_loss_repulsive', L_rep, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_noise', L_beta, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         
+        # Log learning rate
+        current_lr = self.optimizers().param_groups[0]['lr']
+        self.log('learning_rate', current_lr, on_step=True, on_epoch=False, prog_bar=True, sync_dist=False)
+        
         return tot_loss_batch
 
     def validation_step(self, data):
@@ -163,10 +170,22 @@ class TransformerLightningModule(pl.LightningModule):
 
         return tot_loss_batch
     
+    def on_before_optimizer_step(self, optimizer):
+        total_norm = 0.0
+        for p in self.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** 0.5
+        
+        self.log('grad_norm', total_norm, on_step=True, on_epoch=False, prog_bar=False)
+    
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        
+        # More gradual learning rate schedule to avoid instability
         scheduler = {
-            'scheduler': ReduceLROnPlateau(optimizer, mode='min', patience=self.scheduler_patience),
+            'scheduler': MultiStepLR(optimizer, milestones=[5, 10, 15], gamma=self.scheduler_gamma),
             'monitor': 'train_loss',
             'interval': 'epoch',
             'frequency': 1

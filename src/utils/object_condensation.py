@@ -223,7 +223,10 @@ class ObjectCondensation(torch.nn.Module):
         Calculates the repulsive potential function.
         It is in a dedicated function to allow for easy replacement in inherited classes.
         '''
-        return torch.relu(1. - torch.sqrt(distsq + 1e-6)) #hinge
+        # Use a saturating hinge function to prevent unbounded growth
+        dist = torch.sqrt(distsq + 1e-6)
+        # Clamp maximum repulsive loss per pair to prevent explosions
+        return torch.clamp(torch.relu(1. - dist), max=1.0)
     
     def V_attractive_func(self, distsq):
         '''
@@ -316,8 +319,18 @@ class ObjectCondensation(torch.nn.Module):
         # Estimate memory needed: chunk_size × N_total × C × 4 bytes
         estimated_mb = (chunk_size * N_total * C * 4) / (1024 * 1024)
         
-        # Use vectorized path if memory estimate is reasonable (< 500 MB)
-        if estimated_mb < 500:
+        # Dynamically determine memory threshold based on available GPU memory
+        if torch.cuda.is_available() and coords.is_cuda:
+            # Get available GPU memory (free memory)
+            device = coords.device
+            free_memory_mb = torch.cuda.mem_get_info(device)[0] / (1024 * 1024)
+            memory_threshold_mb = free_memory_mb * 0.8
+        else:
+            # CPU fallback: use conservative 500 MB threshold
+            memory_threshold_mb = 500
+        
+        # Use vectorized path if memory estimate is reasonable
+        if estimated_mb < memory_threshold_mb:
             try:
                 # Vectorized computation (original approach, but safer with smaller chunks)
                 coords_k_n = select_with_default(M_not_chunk, coords, 0.)

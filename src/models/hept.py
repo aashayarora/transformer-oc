@@ -192,6 +192,10 @@ class HEPTOCLightningModule(pl.LightningModule):
         self.log('train_loss_repulsive', L_rep, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_noise', L_beta, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         
+        # Log learning rate
+        current_lr = self.optimizers().param_groups[0]['lr']
+        self.log('learning_rate', current_lr, on_step=True, on_epoch=False, prog_bar=True, sync_dist=False)
+        
         return tot_loss_batch
 
     def validation_step(self, data):

@@ -15,16 +15,28 @@ class Trainer:
         
     def setup_data(self):
         """Setup training and validation data loaders"""
-        train_dataset = PCDataset(self.config['train_data_dir'], 
-                                     subset=self.config.get('train_subset', None))
+        self.train_dataset = PCDataset(self.config['train_data_dir'], 
+                                     subset=self.config.get('train_subset', None),
+                                     compute_stats=True)
+        
+        # Do a single pass to compute statistics
+        print("Computing normalization statistics...")
+        for i in range(len(self.train_dataset)):
+            _ = self.train_dataset[i]
+            if (i + 1) % 100 == 0:
+                print(f"  Processed {i + 1}/{len(self.train_dataset)} graphs...")
+        self.train_dataset.finalize_stats()
+        
         val_dataset = PCDataset(self.config['val_data_dir'], 
-                                   subset=self.config.get('val_subset', None))
+                                   subset=self.config.get('val_subset', None),
+                                   compute_stats=False)
+        val_dataset.mean = self.train_dataset.mean
+        val_dataset.std = self.train_dataset.std
 
-        # Get feature dimensions
-        self.feature_dims = train_dataset.get_feature_dims()
+        self.feature_dims = self.train_dataset.get_feature_dims()
         
         train_loader = DataLoader(
-            train_dataset, 
+            self.train_dataset, 
             batch_size=self.config['batch_size'], 
             shuffle=True, 
             num_workers=self.config['num_workers']
@@ -57,12 +69,12 @@ class Trainer:
         
         checkpoint_callback = ModelCheckpoint(
             dirpath=os.path.join(self.config['output_dir'], 'checkpoints'),
-            filename='model-{step:06d}-{train_loss:.2f}',
+            filename='model-{epoch:06d}-{step:06d}-{train_loss:.2f}',
             monitor='train_loss',
             mode='min',
             save_top_k=3,
             save_last=True,
-            every_n_train_steps=self.config.get('save_every', 100),
+            every_n_train_steps=self.config.get('save_every', 5),
             save_on_train_epoch_end=False
         )
         
@@ -82,13 +94,14 @@ class Trainer:
             callbacks=[checkpoint_callback, early_stopping],
             logger=logger,
             accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-            devices=torch.cuda.device_count() if torch.cuda.is_available() else 1,
-            strategy='ddp_find_unused_parameters_true' if torch.cuda.device_count() > 1 else None,
+            devices=self.config.get('gpus', torch.cuda.device_count() if torch.cuda.is_available() else 1),
+            strategy='ddp_find_unused_parameters_true' if (self.config.get('gpus', 1) > 1) else "auto",
             enable_progress_bar=True,
             log_every_n_steps=10,
             enable_checkpointing=True,
             gradient_clip_val=self.config.get('gradient_clip_val', 1.0),
-            gradient_clip_algorithm=self.config.get('gradient_clip_algorithm', 'norm')
+            gradient_clip_algorithm=self.config.get('gradient_clip_algorithm', 'norm'),
+            accumulate_grad_batches=self.config.get('accumulate_grad_batches', 1)
         )
         
         ckpt_path = None
