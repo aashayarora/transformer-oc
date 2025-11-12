@@ -31,7 +31,7 @@ class Trainer:
         
         # If no precomputed stats, compute them on-the-fly
         if train_stats_file is None:
-            print("Computing normalization statistics...")
+            print("Stats file not found, Computing normalization statistics...")
             for i in range(len(self.train_dataset)):
                 _ = self.train_dataset[i]
                 if (i + 1) % 100 == 0:

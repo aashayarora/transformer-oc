@@ -17,15 +17,12 @@ spec:
       containers:
       - name: tensorboard
         image: aaarora/tensorboard:latest
-        command: ["tensorboard"]
-        args: 
-          - "--logdir=/data/output"
-          - "--host=0.0.0.0"
-          - "--port=6006"
-          - "--reload_interval=30"
         ports:
         - containerPort: 6006
           name: tensorboard
+          protocol: TCP
+        - containerPort: 8080
+          name: nginx
           protocol: TCP
         resources:
           limits:
@@ -56,6 +53,10 @@ spec:
     targetPort: 6006
     protocol: TCP
     name: tensorboard
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: nginx
   selector:
     app: ml-tracking-tensorboard
 ---
@@ -77,6 +78,17 @@ spec:
               number: 6006
         path: /
         pathType: ImplementationSpecific
+  - host: ml-tracking-files.nrp-nautilus.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: ml-tracking-tensorboard
+            port:
+              number: 8080
+        path: /
+        pathType: ImplementationSpecific
   tls:
   - hosts:
     - ml-tracking-tensorboard.nrp-nautilus.io
+    - ml-tracking-files.nrp-nautilus.io
