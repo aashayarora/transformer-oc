@@ -52,35 +52,24 @@ class TransformerOCModel(nn.Module):
         x = self.input_proj(x)
         
         batch_size = batch.max().item() + 1
-        device = x.device
         
-        # Process graphs with varying sequence lengths more memory-efficiently
-        # Group by batch and process, but avoid creating full dense tensor
         outputs = []
         
         for i in range(batch_size):
             mask = batch == i
             x_graph = x[mask]  # Shape: (num_nodes_i, hidden_dim)
             
-            # Add sequence dimension and process through transformer
-            # Shape: (seq_len, 1, hidden_dim)
             x_graph = x_graph.unsqueeze(1)
             
-            # Process this single graph through transformer
-            # No padding mask needed for single graph
             x_transformed = self.transformer_encoder(x_graph)
-            
-            # Remove batch dimension
             x_transformed = x_transformed.squeeze(1)
             
             outputs.append(x_transformed)
         
-        # Concatenate all outputs back together
         x_out = torch.cat(outputs, dim=0)
 
         coords_latent = self.latent_head(x_out)
         
-        # Normalize latent coordinates to prevent them from growing unbounded
         coords_latent = torch.nn.functional.normalize(coords_latent, p=2, dim=-1) * (self.latent_dim ** 0.5)
 
         eps = 1e-6
