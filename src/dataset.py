@@ -28,11 +28,8 @@ class PCDataset(Dataset):
         # 17-22: md2 features (need normalization)
         # 23-24: md2 features (don't need normalization)
 
-        # Apply log transformation to pt
         graph.x[:, 0] = torch.log(graph.x[:, 0] + 1e-6)
         
-        # Min-max normalization to [0, 1] for each feature
-        # Based on observed min/max values across the dataset (rounded)
         min_vals = torch.tensor([-1.02, -2.62, -3.15, -0.29, -0.92, -1.49, -1.60, -0.80,
                                 -99.0, -99.0, -224.0, -99.0, -99.0, -225.0, -0.018, -0.82,
                                 -5.03, -111.0, -111.0, -268.0, -111.0, -111.0, -268.0, -0.008,
