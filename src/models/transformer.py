@@ -54,34 +54,29 @@ class TransformerOCModel(nn.Module):
         batch_size = batch.max().item() + 1
         device = x.device
         
-        unique_batches, counts = torch.unique(batch, return_counts=True)
-        max_seq_len = counts.max().item()
-        
-        x_batched = torch.zeros(batch_size, max_seq_len, self.hidden_dim, device=device)
-        
-        for i in range(batch_size):
-            mask = batch == i
-            num_nodes = mask.sum().item()
-            x_batched[i, :num_nodes] = x[mask]
-        
-        x_batched = x_batched.transpose(0, 1)
-        
-        src_key_padding_mask = torch.ones(batch_size, max_seq_len, dtype=torch.bool, device=device)
+        # Process graphs with varying sequence lengths more memory-efficiently
+        # Group by batch and process, but avoid creating full dense tensor
+        outputs = []
         
         for i in range(batch_size):
             mask = batch == i
-            num_nodes = mask.sum().item()
-            src_key_padding_mask[i, :num_nodes] = False
+            x_graph = x[mask]  # Shape: (num_nodes_i, hidden_dim)
+            
+            # Add sequence dimension and process through transformer
+            # Shape: (seq_len, 1, hidden_dim)
+            x_graph = x_graph.unsqueeze(1)
+            
+            # Process this single graph through transformer
+            # No padding mask needed for single graph
+            x_transformed = self.transformer_encoder(x_graph)
+            
+            # Remove batch dimension
+            x_transformed = x_transformed.squeeze(1)
+            
+            outputs.append(x_transformed)
         
-        x_transformed = self.transformer_encoder(x_batched, src_key_padding_mask=src_key_padding_mask)
-        
-        x_transformed = x_transformed.transpose(0, 1)
-        x_out = torch.zeros_like(x, device=device)
-        
-        for i in range(batch_size):
-            mask = batch == i
-            num_nodes = mask.sum().item()
-            x_out[mask] = x_transformed[i, :num_nodes]
+        # Concatenate all outputs back together
+        x_out = torch.cat(outputs, dim=0)
 
         coords_latent = self.latent_head(x_out)
         
@@ -145,6 +140,9 @@ class TransformerLightningModule(pl.LightningModule):
         current_lr = self.optimizers().param_groups[0]['lr']
         self.log('learning_rate', current_lr, on_step=True, on_epoch=False, prog_bar=True, sync_dist=False)
         
+        # Clean up intermediate tensors
+        del model_out, L_att, L_rep, L_beta
+        
         return tot_loss_batch
 
     def validation_step(self, data):
@@ -168,6 +166,9 @@ class TransformerLightningModule(pl.LightningModule):
         self.log('val_loss_repulsive', L_rep, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_noise', L_beta, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
 
+        # Clean up intermediate tensors
+        del model_out, L_att, L_rep, L_beta
+        
         return tot_loss_batch
     
     def on_before_optimizer_step(self, optimizer):

@@ -19,7 +19,7 @@
   
   "learning_rate": 5e-4,
   "weight_decay": 1e-4,
-  "batch_size": 64,
+  "batch_size": 16,
   "epochs": 20,
   "num_workers": 4,
   "num_cpu_threads": 64,
@@ -29,6 +29,8 @@
 
   "gradient_clip_val": 1.0,
   "gradient_clip_algorithm": "norm",
+  "accumulate_grad_batches": 4,
+  "precision": 16,
 
   "output_dir": "./output",
   "save_every": 100,
@@ -36,7 +38,7 @@
 
   "seed": 42,
 
-  "oc_repulsive_chunk_size": 128,
+  "oc_repulsive_chunk_size": 32,
   "oc_repulsive_distance_cutoff": 5.0,
   "oc_use_checkpointing": false,
   "oc_q_min": 0.1,

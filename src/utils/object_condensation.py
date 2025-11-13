@@ -316,7 +316,7 @@ class ObjectCondensation(torch.nn.Module):
         N_total = coords.size(0)
         C = coords.size(1)
         
-        # Estimate memory needed: chunk_size × N_total × C × 4 bytes
+        # More conservative memory estimate
         estimated_mb = (chunk_size * N_total * C * 4) / (1024 * 1024)
         
         # Dynamically determine memory threshold based on available GPU memory
@@ -324,10 +324,11 @@ class ObjectCondensation(torch.nn.Module):
             # Get available GPU memory (free memory)
             device = coords.device
             free_memory_mb = torch.cuda.mem_get_info(device)[0] / (1024 * 1024)
-            memory_threshold_mb = free_memory_mb * 0.5
+            # Use only 30% of free memory to be conservative
+            memory_threshold_mb = free_memory_mb * 0.3
         else:
-            # CPU fallback: use conservative 500 MB threshold
-            memory_threshold_mb = 500
+            # CPU fallback: use conservative 200 MB threshold
+            memory_threshold_mb = 200
         
         # Use vectorized path if memory estimate is reasonable
         if estimated_mb < memory_threshold_mb:
@@ -351,6 +352,9 @@ class ObjectCondensation(torch.nn.Module):
                 rep_loss_chunk = torch.sum(V_repulsive, dim=1)
                 mask_sum_chunk = torch.sum(mask_k_n, dim=1)
                 
+                # Clean up immediately
+                del coords_k_n, beta_scale_k_n, mask_k_n, distsq_k_n, V_repulsive
+                
                 return rep_loss_chunk, mask_sum_chunk
                 
             except RuntimeError as e:
@@ -365,7 +369,7 @@ class ObjectCondensation(torch.nn.Module):
         chunk_rep_loss = torch.zeros(chunk_size, 1, device=coords.device, dtype=coords.dtype)
         chunk_mask_sum = torch.zeros(chunk_size, 1, device=coords.device, dtype=coords.dtype)
         
-        max_points_per_batch = 10000  # Increased from 5000 since we're already in fallback mode
+        max_points_per_batch = 5000  # Reduced back to 5000 for safety
         
         # Process each object individually
         for i in range(chunk_size):
@@ -405,6 +409,11 @@ class ObjectCondensation(torch.nn.Module):
                         V_rep = beta_scale_k_chunk[i] * self.V_repulsive_func(distsq) * beta_batch
                         total_loss += V_rep.sum().item()
                         total_count += batch_count
+                    
+                    # Clean up batch tensors
+                    del coords_batch, beta_batch, distsq
+                    if self.repulsive_distance_cutoff is not None:
+                        del cutoff_mask
                 
                 chunk_rep_loss[i] = total_loss
                 chunk_mask_sum[i] = total_count
@@ -428,6 +437,9 @@ class ObjectCondensation(torch.nn.Module):
                 
                 chunk_rep_loss[i] = V_rep.sum()
                 chunk_mask_sum[i] = num_valid
+                
+                # Clean up
+                del coords_not_obj, beta_not_obj, distsq, V_rep
         
         return chunk_rep_loss, chunk_mask_sum
         
