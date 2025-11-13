@@ -182,10 +182,8 @@ class TransformerLightningModule(pl.LightningModule):
     
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        
-        # More gradual learning rate schedule to avoid instability
         scheduler = {
-            'scheduler': MultiStepLR(optimizer, milestones=[5, 10, 15], gamma=self.scheduler_gamma),
+            'scheduler': MultiStepLR(optimizer, milestones=[10, 15], gamma=self.scheduler_gamma),
             'monitor': 'train_loss',
             'interval': 'epoch',
             'frequency': 1
