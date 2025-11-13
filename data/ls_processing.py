@@ -20,6 +20,8 @@ FAKE_TARGET = ["ls_isFake"]
 
 ALL_COLUMNS = LS_VARS + MD_VARS + MD_INDEX + TARGET + SIM_VARS + FAKE_TARGET
 
+MAX_LS_PT = 2000
+
 class GraphBuilder:
     def __init__(self, input_path, output_path, train_split=0.8):
         self.output_path = output_path
@@ -49,8 +51,10 @@ class GraphBuilder:
                 print(f"Graph {idx} already exists, skipping...")
                 return
             
-            ls_features = ak.to_dataframe(event_data[LS_VARS]).values
-            md_idx = ak.to_dataframe(event_data[MD_INDEX]).values
+            ls_features = ak.to_dataframe(event_data[LS_VARS]).values[f"ls_pt < {MAX_LS_PT}"]
+            md_idx = ak.to_dataframe(event_data[MD_INDEX]).values[f"ls_pt < {MAX_LS_PT}"]
+            target = ak.to_dataframe(event_data[TARGET]).values[f"ls_pt < {MAX_LS_PT}"]
+
             md_features = ak.to_dataframe(event_data[MD_VARS]).values[md_idx]
 
             md_features = md_features.reshape(-1, 2 * len(MD_VARS))
@@ -58,12 +62,12 @@ class GraphBuilder:
             if args.nofakes:
                 fake_mask = ak.to_dataframe(event_data[FAKE_TARGET]).values.flatten() == 0
                 node_features = torch.Tensor(ak.concatenate([ls_features[fake_mask], md_features[fake_mask]], axis=1))
-                target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)[fake_mask]
+                target = torch.Tensor(target[fake_mask])
                 target_flat = target.flatten()
 
             else:
                 node_features = torch.Tensor(ak.concatenate([ls_features, md_features], axis=1))
-                target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)
+                target = torch.Tensor(target)
                 target_flat = target.flatten()
                 target_flat[target_flat < 0] = -999999
             

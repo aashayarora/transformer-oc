@@ -92,7 +92,6 @@ class Trainer:
             enable_checkpointing=True,
             gradient_clip_val=self.config.get('gradient_clip_val', 1.0),
             gradient_clip_algorithm=self.config.get('gradient_clip_algorithm', 'norm'),
-            accumulate_grad_batches=self.config.get('accumulate_grad_batches', 1)
         )
         
         ckpt_path = None
