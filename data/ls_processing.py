@@ -51,9 +51,12 @@ class GraphBuilder:
                 print(f"Graph {idx} already exists, skipping...")
                 return
             
-            ls_features = ak.to_dataframe(event_data[LS_VARS]).query(f"ls_pt < {MAX_LS_PT}").values
-            md_idx = ak.to_dataframe(event_data[MD_INDEX]).query(f"ls_pt < {MAX_LS_PT}").values
-            target = ak.to_dataframe(event_data[TARGET]).query(f"ls_pt < {MAX_LS_PT}").values
+            ls_features = ak.to_dataframe(event_data[LS_VARS])
+            pt_mask = ls_features["ls_pt"] < MAX_LS_PT
+            
+            ls_features = ls_features[pt_mask].values
+            md_idx = ak.to_dataframe(event_data[MD_INDEX])[pt_mask].values
+            target = ak.to_dataframe(event_data[TARGET])[pt_mask].values
 
             md_features = ak.to_dataframe(event_data[MD_VARS]).values[md_idx]
 
