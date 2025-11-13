@@ -324,7 +324,7 @@ class ObjectCondensation(torch.nn.Module):
             # Get available GPU memory (free memory)
             device = coords.device
             free_memory_mb = torch.cuda.mem_get_info(device)[0] / (1024 * 1024)
-            memory_threshold_mb = free_memory_mb * 0.8
+            memory_threshold_mb = free_memory_mb * 0.5
         else:
             # CPU fallback: use conservative 500 MB threshold
             memory_threshold_mb = 500
