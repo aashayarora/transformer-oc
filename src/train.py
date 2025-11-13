@@ -14,42 +14,16 @@ class Trainer:
         self.config = config
         
     def setup_data(self):
-        """Setup training and validation data loaders"""
-        # Auto-detect stats file in the data directory
-        train_data_dir = self.config['train_data_dir']
-        train_stats_file = os.path.join(train_data_dir, 'stats.pt')
-        if not os.path.exists(train_stats_file):
-            train_stats_file = None
-        
-        # Create training dataset
         self.train_dataset = PCDataset(
-            train_data_dir, 
-            subset=self.config.get('train_subset', None),
-            compute_stats=(train_stats_file is None),  # Only compute if no precomputed stats
-            stats_file=train_stats_file
+            self.config['train_data_dir'], 
+            subset=self.config.get('train_subset', None)
         )
         
-        # If no precomputed stats, compute them on-the-fly
-        if train_stats_file is None:
-            print("Stats file not found, Computing normalization statistics...")
-            for i in range(len(self.train_dataset)):
-                _ = self.train_dataset[i]
-                if (i + 1) % 100 == 0:
-                    print(f"  Processed {i + 1}/{len(self.train_dataset)} graphs...")
-            self.train_dataset.finalize_stats()
-        
-        # Create validation dataset (use training stats)
         val_dataset = PCDataset(
             self.config['val_data_dir'], 
-            subset=self.config.get('val_subset', None),
-            compute_stats=False,
-            stats_file=None
+            subset=self.config.get('val_subset', None)
         )
         
-        # Use training stats for validation
-        val_dataset.mean = self.train_dataset.mean
-        val_dataset.std = self.train_dataset.std
-
         self.feature_dims = self.train_dataset.get_feature_dims()
         
         train_loader = DataLoader(
