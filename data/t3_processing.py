@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 
 import uproot
 import awkward as ak
+import numpy as np
 
 import torch
 from torch_geometric.data import Data
@@ -11,14 +12,22 @@ from torch_geometric.data import Data
 import random
 
 SIM_VARS = ["sim_pt", "sim_eta", "sim_phi"]
-LS_VARS = ["ls_pt", "ls_eta", "ls_phi", "ls_dPhis", "ls_dPhiChanges", "ls_dAlphaInners", "ls_dAlphaOuters", "ls_dAlphaInnerOuters"]
+
+T3_VARS = ["t3_pt", "t3_eta", "t3_phi"]
+LS_INDEX = ["t3_lsIdx0", "t3_lsIdx1"]
+
+LS_VARS = ["ls_dPhis", "ls_dPhiChanges", "ls_dAlphaInners", "ls_dAlphaOuters", "ls_dAlphaInnerOuters"]
+
 MD_VARS = ["md_anchor_x", "md_anchor_y", "md_anchor_z", "md_other_x", "md_other_y", "md_other_z", "md_dphi", "md_dphichange", "md_dz"]
-
 MD_INDEX = ["ls_mdIdx0", "ls_mdIdx1"]
-TARGET = ["ls_simIdx"]
-FAKE_TARGET = ["ls_isFake"]
 
-ALL_COLUMNS = LS_VARS + MD_VARS + MD_INDEX + TARGET + SIM_VARS + FAKE_TARGET
+TARGET = ["t3_simIdx"]
+
+FAKE_TARGET = ["t3_isFake"]
+
+ALL_COLUMNS = SIM_VARS + T3_VARS + LS_INDEX + LS_VARS + MD_VARS + MD_INDEX + TARGET + FAKE_TARGET
+
+MAX_T3_PT = 2000
 
 class GraphBuilder:
     def __init__(self, input_path, output_path, train_split=0.8):
@@ -49,20 +58,30 @@ class GraphBuilder:
                 print(f"Graph {idx} already exists, skipping...")
                 return
             
-            ls_features = ak.to_dataframe(event_data[LS_VARS]).values
-            md_idx = ak.to_dataframe(event_data[MD_INDEX]).values
-            md_features = ak.to_dataframe(event_data[MD_VARS]).values[md_idx]
+            t3_features = ak.to_dataframe(event_data[T3_VARS])
+            pt_mask = t3_features["t3_pt"] < MAX_T3_PT
 
-            md_features = md_features.reshape(-1, 2 * len(MD_VARS))
+            t3_features = t3_features[pt_mask].values
+
+            ls_idx = ak.to_dataframe(event_data[LS_INDEX])[pt_mask].values
+            md_idx = ak.to_dataframe(event_data[MD_INDEX]).values[ls_idx]
+
+            ls_features = ak.to_dataframe(event_data[LS_VARS]).values[ls_idx]
+            ls_features = ls_features.reshape(-1, 2 * len(LS_VARS))
+
+            md_idx_flat = md_idx.reshape(-1, 4)
+            md_features = ak.to_dataframe(event_data[MD_VARS]).values[md_idx_flat]
+            
+            md_features = md_features.reshape(-1, 4 * len(MD_VARS))
 
             if args.nofakes:
                 fake_mask = ak.to_dataframe(event_data[FAKE_TARGET]).values.flatten() == 0
-                node_features = torch.Tensor(ak.concatenate([ls_features[fake_mask], md_features[fake_mask]], axis=1))
+                node_features = torch.Tensor(ak.concatenate([t3_features[fake_mask], ls_features[fake_mask], md_features[fake_mask]], axis=1))
                 target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)[fake_mask]
                 target_flat = target.flatten()
 
             else:
-                node_features = torch.Tensor(ak.concatenate([ls_features, md_features], axis=1))
+                node_features = torch.Tensor(ak.concatenate([t3_features, ls_features, md_features], axis=1))
                 target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)
                 target_flat = target.flatten()
                 target_flat[target_flat < 0] = -999999
@@ -94,7 +113,6 @@ class GraphBuilder:
                     idx, 
                     args
                 )
-
 
 if __name__ == "__main__":
     argparser = ArgumentParser()
