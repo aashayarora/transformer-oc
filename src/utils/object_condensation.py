@@ -225,8 +225,7 @@ class ObjectCondensation(torch.nn.Module):
         '''
         # Use a saturating hinge function to prevent unbounded growth
         dist = torch.sqrt(distsq + 1e-6)
-        # Clamp maximum repulsive loss per pair to prevent explosions
-        return torch.clamp(torch.relu(1. - dist), max=1.0)
+        return torch.relu(1. - dist)
     
     def V_attractive_func(self, distsq):
         '''

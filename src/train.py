@@ -86,7 +86,7 @@ class Trainer:
             logger=logger,
             accelerator='gpu' if torch.cuda.is_available() else 'cpu',
             devices=self.config.get('gpus', torch.cuda.device_count() if torch.cuda.is_available() else 1),
-            strategy='ddp_find_unused_parameters_true' if (self.config.get('gpus', 1) > 1) else "auto",
+            strategy='ddp_find_unused_parameters_true' if (self.config.get('gpus', torch.cuda.device_count()) > 1) else "auto",
             enable_progress_bar=True,
             log_every_n_steps=10,
             enable_checkpointing=True,
