@@ -77,12 +77,12 @@ class GraphBuilder:
             if args.nofakes:
                 fake_mask = ak.to_dataframe(event_data[FAKE_TARGET]).values.flatten() == 0
                 node_features = torch.Tensor(ak.concatenate([t3_features[fake_mask], ls_features[fake_mask], md_features[fake_mask]], axis=1))
-                target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)[fake_mask]
+                target = torch.Tensor(ak.to_dataframe(event_data[TARGET])[pt_mask].values)[fake_mask]
                 target_flat = target.flatten()
 
             else:
                 node_features = torch.Tensor(ak.concatenate([t3_features, ls_features, md_features], axis=1))
-                target = torch.Tensor(ak.to_dataframe(event_data[TARGET]).values)
+                target = torch.Tensor(ak.to_dataframe(event_data[TARGET])[pt_mask].values)
                 target_flat = target.flatten()
                 target_flat[target_flat < 0] = -999999
             
