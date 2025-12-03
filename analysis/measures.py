@@ -12,15 +12,14 @@ import mplhep as hep
 hep.style.use(hep.style.ROOT)
 
 @torch.no_grad()
-def run_inference_and_clustering(data, model, device, eps=0.2):
+def run_inference_and_clustering(data, model, device, eps=0.2, min_samples=2):
     x = data.x.to(device)
     batch = data.batch.to(device)
-    coords = data.x[:, 1:3].to(device)
     
     model.eval()
-    out = model(x, coords, batch)
+    out = model(x, batch)
     X = out["H"].cpu().detach().numpy()
-    cluster = DBSCAN(eps=eps, min_samples=2).fit(X)
+    cluster = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
     return cluster
 
 def calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_threshold=0.75, eta_cut=None):

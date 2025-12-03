@@ -1,47 +1,121 @@
 #!/usr/bin/env python3
+
 import argparse
 import os
 import json
-from train import Trainer
-from helpers import set_seed
+import torch
+import pytorch_lightning as pl
 
-def parse_args():
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.loggers import TensorBoardLogger
+from torch_geometric.loader import DataLoader
+
+from dataset import PCDataset
+from helpers import set_seed, load_config
+
+class Trainer:
+    def __init__(self, config):
+        self.config = config
+
+    def setup_data(self):
+        self.train_dataset = PCDataset(
+            self.config['train_data_dir'],
+            subset=self.config.get('train_subset', None),
+        )
+        val_dataset = PCDataset(
+            self.config['val_data_dir'],
+            subset=self.config.get('val_subset', None),
+        )
+        self.feature_dims = self.train_dataset.get_feature_dims()
+        train_loader = DataLoader(
+            self.train_dataset,
+            batch_size=self.config['batch_size'],
+            shuffle=True,
+            num_workers=self.config['num_workers']
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=self.config['num_workers']
+        )
+        return train_loader, val_loader
+
+    def train(self):
+        self.train_loader, self.val_loader = self.setup_data()
+        self.model = self.config.get('model', 'transformer')
+        if self.model == 'transformer':
+            from model import TransformerLightningModule
+            self.model = TransformerLightningModule(
+                self.config,
+                input_dim=self.feature_dims['node_features_dim']
+            )
+        logger = TensorBoardLogger(
+            save_dir=self.config['output_dir']
+        )
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=logger.log_dir + '/checkpoints',
+            filename='model-{epoch:06d}-{step:06d}-{train_loss:.2f}',
+            monitor='train_loss',
+            mode='min',
+            save_top_k=3,
+            save_last=True,
+            every_n_train_steps=self.config.get('save_every', 5),
+            save_on_train_epoch_end=False
+        )
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=self.config.get('early_stopping_patience', 20),
+            mode='min',
+            verbose=True
+        )
+        # Determine device configuration
+        num_gpus = len(self.config.get('gpus', [1])) if isinstance(self.config.get('gpus'), list) else 1
+        accelerator = 'gpu' if torch.cuda.is_available() and num_gpus > 0 else 'cpu'
+        
+        trainer = pl.Trainer(
+            max_epochs=self.config['epochs'],
+            callbacks=[checkpoint_callback, early_stopping],
+            logger=logger,
+            accelerator=accelerator,
+            devices=self.config.get('gpus', [torch.cuda.device_count() if torch.cuda.is_available() else 0]),
+            strategy='ddp_find_unused_parameters_true' if (num_gpus > 1) else "auto",
+            enable_progress_bar=True,
+            check_val_every_n_epoch=self.config.get('check_val_every_n_epoch', 5),
+            log_every_n_steps=5,
+            enable_checkpointing=True,
+            gradient_clip_val=self.config.get('gradient_clip_val', 1.0),
+            gradient_clip_algorithm=self.config.get('gradient_clip_algorithm', 'norm'),
+            accumulate_grad_batches=self.config.get('accumulate_grad_batches', 1),
+            precision=self.config.get('precision', 32),
+        )
+
+        ckpt_path = None
+        if self.config.get('resume'):
+            ckpt_path = self.config['resume']
+            print(f"Resuming training from {ckpt_path}")
+        trainer.fit(self.model, self.train_loader, self.val_loader, ckpt_path=ckpt_path)
+        
+        if trainer.is_global_zero:
+            final_model_path = os.path.join(logger.log_dir, 'final_model.ckpt')
+            trainer.save_checkpoint(final_model_path)
+            print(f"Final model saved to {final_model_path}")
+
+def main():
     parser = argparse.ArgumentParser(description='Train Graph Neural Network for Particle Tracking')
     parser.add_argument('--config', type=str,
-                       help='Path to JSON config file (overrides command line args)')
+                       help='Path to YAML config file')
     parser.add_argument('--resume', type=str,
                        help='Path to checkpoint to resume from')
     
-    return parser.parse_args()
+    args = parser.parse_args()
 
-def main():
-    args = parse_args()
-    
     if args.config:
-        with open(args.config, 'r') as f:
-            config = json.load(f)
+        config = load_config(args.config)
     else:
         raise ValueError("A configuration file must be provided with --config")
-    
     set_seed(config['seed'])
-    
     os.makedirs(config['output_dir'], exist_ok=True)
-
-    if os.path.exists(config['output_dir']):
-        existing_runs = [d for d in os.listdir(config['output_dir']) if os.path.isdir(os.path.join(config['output_dir'], d)) and d.startswith('run_')]
-        if existing_runs:
-            existing_indices = [int(d.split('_')[1]) for d in existing_runs if d.split('_')[1].isdigit()]
-            next_index = max(existing_indices) + 1 if existing_indices else 0
-        else:
-            next_index = 0
-        config['output_dir'] = os.path.join(config['output_dir'], f'run_{next_index:02d}')
-    
-    print("Training Configuration:")
-    print("-" * 50)
-    for key, value in config.items():
-        print(f"{key}: {value}")
-    print("-" * 50)
-    
     trainer = Trainer(config)
     trainer.train()
 

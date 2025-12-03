@@ -223,9 +223,7 @@ class ObjectCondensation(torch.nn.Module):
         Calculates the repulsive potential function.
         It is in a dedicated function to allow for easy replacement in inherited classes.
         '''
-        # Use a saturating hinge function to prevent unbounded growth
-        dist = torch.sqrt(distsq + 1e-6)
-        return torch.relu(1. - dist)
+        return torch.exp(-distsq)
     
     def V_attractive_func(self, distsq):
         '''

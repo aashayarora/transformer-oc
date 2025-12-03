@@ -1,10 +1,15 @@
 import torch
+import torch.backends.cuda
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True) 
+torch.backends.cuda.enable_cudnn_sdp(False)
+
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 
-from utils.object_condensation import ObjectCondensation
-# from fastgraphcompute.object_condensation import ObjectCondensation
+# from utils.object_condensation import ObjectCondensation
+from fastgraphcompute.object_condensation import ObjectCondensation
 from fastgraphcompute.torch_geometric_interface import row_splits_from_strict_batch as batch_to_rowsplits
 
 import pytorch_lightning as pl
@@ -20,18 +25,31 @@ class TransformerOCModel(nn.Module):
         self.transformer_encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.hidden_dim,
             nhead=num_heads,
-            dim_feedforward=self.hidden_dim * 4,
+            dim_feedforward=self.hidden_dim * 2,
             dropout=dropout,
-            activation='relu'
+            activation='relu',
+            batch_first=True
         )
 
-        self.transformer_encoder = nn.TransformerEncoder(
-            self.transformer_encoder_layer,
-            num_layers=num_layers
-        )
+        # Use ModuleList for manual layer iteration with skip connections
+        self.transformer_layers = nn.ModuleList([
+            nn.TransformerEncoderLayer(
+                d_model=self.hidden_dim,
+                nhead=num_heads,
+                dim_feedforward=self.hidden_dim * 2,
+                dropout=dropout,
+                activation='relu',
+                batch_first=True
+            ) for _ in range(num_layers)
+        ])
 
         self.input_proj = nn.Linear(input_dim, hidden_dim)
-        self.latent_head = nn.Linear(self.hidden_dim, self.latent_dim)
+        
+        self.latent_head = nn.Sequential(
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.latent_dim)
+        )
 
         self.beta_head = nn.Sequential(
             nn.Linear(self.hidden_dim, int(self.hidden_dim // 2)),
@@ -46,37 +64,51 @@ class TransformerOCModel(nn.Module):
     def _init_weights(self):
         for p in self.parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+                nn.init.kaiming_uniform_(p, nonlinearity='relu')
+        
+        with torch.no_grad():
+            self.beta_head[-1].weight.mul_(0.1)
+            self.beta_head[-1].bias.fill_(-1.0)
+            
+            nn.init.xavier_uniform_(self.latent_head[0].weight)
+            nn.init.zeros_(self.latent_head[0].bias)
+            nn.init.xavier_uniform_(self.latent_head[-1].weight)
+            nn.init.zeros_(self.latent_head[-1].bias)
 
-    def forward(self, x, coords, batch):
-        x = self.input_proj(x)
+    def forward(self, x_raw, batch):
+        x = self.input_proj(x_raw)
         
         batch_size = batch.max().item() + 1
+        device = x.device
         
-        outputs = []
+        counts = torch.bincount(batch, minlength=batch_size)
+        max_nodes = counts.max().item()
         
-        for i in range(batch_size):
-            mask = batch == i
-            x_graph = x[mask]  # Shape: (num_nodes_i, hidden_dim)
-            
-            x_graph = x_graph.unsqueeze(1)
-            
-            x_transformed = self.transformer_encoder(x_graph)
-            x_transformed = x_transformed.squeeze(1)
-            
-            outputs.append(x_transformed)
+        x_padded = torch.zeros(batch_size, max_nodes, self.hidden_dim, device=device, dtype=x.dtype)
         
-        x_out = torch.cat(outputs, dim=0)
+        offsets = torch.zeros(batch_size + 1, device=device, dtype=torch.long)
+        offsets[1:] = counts.cumsum(0)
+        position_in_graph = torch.arange(len(batch), device=device) - offsets[batch]
+        
+        x_padded[batch, position_in_graph] = x
+        
+        padding_mask = torch.arange(max_nodes, device=device).unsqueeze(0) >= counts.unsqueeze(1)
+        
+        # Apply transformer layers with skip connections from input
+        x_transformed = x_padded
+        for layer in self.transformer_layers:
+            x_transformed = layer(x_transformed, src_key_padding_mask=padding_mask) + x_padded
+        
+        x_out = x_transformed[batch, position_in_graph]
 
         coords_latent = self.latent_head(x_out)
-        
-        coords_latent = torch.nn.functional.normalize(coords_latent, p=2, dim=-1) * (self.latent_dim ** 0.5)
 
         eps = 1e-6
         beta = self.beta_head(x_out).sigmoid()
         beta = torch.clamp(beta, eps, 1 - eps)
         
         return {"B": beta, "H": coords_latent}
+    
 
 class TransformerLightningModule(pl.LightningModule):
     def __init__(self, config, input_dim):
@@ -96,12 +128,16 @@ class TransformerLightningModule(pl.LightningModule):
         self.weight_decay = config['weight_decay']
         self.scheduler_gamma = config['scheduler_gamma']
         
+        self.loss_weight_attractive = config.get('loss_weight_attractive', 1.0)
+        self.loss_weight_repulsive = config.get('loss_weight_repulsive', 0.1)
+        self.loss_weight_beta = config.get('loss_weight_beta', 1.0)
+        
         self.criterion = ObjectCondensation(
             q_min=config.get('oc_q_min', 0.1),
             s_B=config.get('oc_s_B', 1.0),
-            repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
-            repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
-            use_checkpointing=config.get('oc_use_checkpointing', False)
+            # repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
+            # repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
+            # use_checkpointing=config.get('oc_use_checkpointing', False)
         )
     
     def training_step(self, data):
@@ -109,7 +145,7 @@ class TransformerLightningModule(pl.LightningModule):
         sim_index[sim_index < 0] = -1
         row_splits = batch_to_rowsplits(batch)
         
-        model_out = self.model(x, None, batch)
+        model_out = self.model(x, batch)
 
         L_att, L_rep, L_beta, _, _ = self.criterion(
             beta = model_out["B"],
@@ -118,18 +154,18 @@ class TransformerLightningModule(pl.LightningModule):
             row_splits = row_splits
         )
     
-        tot_loss_batch = L_att + L_rep + L_beta
+        tot_loss_batch = (self.loss_weight_attractive * L_att + 
+                         self.loss_weight_repulsive * L_rep + 
+                         self.loss_weight_beta * L_beta)
 
         self.log('train_loss', tot_loss_batch, on_step=True, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_attractive', L_att, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_repulsive', L_rep, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_noise', L_beta, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         
-        # Log learning rate
         current_lr = self.optimizers().param_groups[0]['lr']
         self.log('learning_rate', current_lr, on_step=True, on_epoch=False, prog_bar=True, sync_dist=False)
         
-        # Clean up intermediate tensors
         del model_out, L_att, L_rep, L_beta
         
         return tot_loss_batch
@@ -139,7 +175,7 @@ class TransformerLightningModule(pl.LightningModule):
         sim_index[sim_index < 0] = -1
         row_splits = batch_to_rowsplits(batch)
 
-        model_out = self.model(x, None, batch)
+        model_out = self.model(x, batch)
 
         L_att, L_rep, L_beta, _, _ = self.criterion(
             beta = model_out["B"],
@@ -148,14 +184,15 @@ class TransformerLightningModule(pl.LightningModule):
             row_splits = row_splits
         )
     
-        tot_loss_batch = L_att + L_rep + L_beta
+        tot_loss_batch = (self.loss_weight_attractive * L_att + 
+                         self.loss_weight_repulsive * L_rep + 
+                         self.loss_weight_beta * L_beta)
 
         self.log('val_loss', tot_loss_batch, on_step=False, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_attractive', L_att, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_repulsive', L_rep, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_noise', L_beta, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
 
-        # Clean up intermediate tensors
         del model_out, L_att, L_rep, L_beta
         
         return tot_loss_batch
@@ -171,11 +208,19 @@ class TransformerLightningModule(pl.LightningModule):
         self.log('grad_norm', total_norm, on_step=True, on_epoch=False, prog_bar=False)
     
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = {
-            'scheduler': MultiStepLR(optimizer, milestones=[10, 15], gamma=self.scheduler_gamma),
-            'monitor': 'train_loss',
-            'interval': 'epoch',
-            'frequency': 1
+        optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        scheduler = MultiStepLR(
+            optimizer,
+            milestones=self.hparams.get('scheduler_milestones', [10]),
+            gamma=self.scheduler_gamma
+        )
+        
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'interval': 'epoch',
+                'frequency': 1,
+                'monitor': 'val_loss',
+            }
         }
-        return {'optimizer': optimizer, 'lr_scheduler': scheduler}

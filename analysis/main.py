@@ -1,5 +1,5 @@
 import os
-import json
+from glob import glob
 import numpy as np
 from argparse import ArgumentParser
 
@@ -15,15 +15,15 @@ from validation import validate_model, make_epsilon_validation_plot
 
 def main():
     argparser = ArgumentParser()
-    argparser.add_argument('--config', type=str, default='./config.json', help='Path to the config file')
+    argparser.add_argument('--config', type=str, default='./config.yaml', help='Path to the config file (YAML)')
     argparser.add_argument('--output', type=str, help='Path to the trained model file')
     argparser.add_argument('--epsilon-validation', action='store_true', help='Run model validation')
-    argparser.add_argument('--epsilon', type=float, default=0.05, help='DBSCAN epsilon parameter')
+    argparser.add_argument('--epsilon', type=float, default=None, help='DBSCAN epsilon parameter (overrides config)')
     argparser.add_argument('--n-events', type=int, default=-1, help='Number of events to process (-1 for all)')
     args = argparser.parse_args()
 
-    with open(args.config, 'r') as f:
-        config = json.load(f)
+    from helpers import load_config
+    config = load_config(args.config)
 
     subset = args.n_events if args.n_events > 0 else None
     dataset = PCDataset(
@@ -40,7 +40,7 @@ def main():
     num_node_features = dataset[0].num_node_features
 
     if config.get('model_type', 'transformer') == 'transformer':
-        from models.transformer import TransformerOCModel
+        from model import TransformerOCModel
         model = TransformerOCModel(
             input_dim=num_node_features,
             hidden_dim=config.get('hidden_dim', config.get('d_model', 128)),
@@ -50,7 +50,7 @@ def main():
             dropout=config.get('dropout', 0.1)
         )
     else:
-        from models.hept import HEPTOCModel
+        from model import HEPTOCModel
         model = HEPTOCModel(
                 input_dim=num_node_features,
                 hidden_dim=config.get('hidden_dim', config.get('d_model', 128)),
@@ -70,7 +70,9 @@ def main():
     output = args.output + '/final_model.ckpt'
 
     if not os.path.exists(output):
-        output = args.output + '/last.ckpt'
+        output = sorted(glob(os.path.join(args.output, 'checkpoints', '*.ckpt')))[-1]
+
+    print(f"Loading model from: {output}")
 
     state_dict = torch.load(output, weights_only=True)['state_dict']
 
@@ -80,23 +82,36 @@ def main():
     model.load_state_dict(state_dict)
     model.eval()
 
+    # Get DBSCAN and purity parameters from config (needed for both epsilon validation and regular inference)
+    min_samples = config.get('dbscan_min_samples', 2)
+    purity_threshold = config.get('purity_threshold', 0.75)
+
     if args.epsilon_validation:
+        eps_range = config.get('epsilon_validation_values', [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.5, 1.0])
         rates = []
         for i, data in enumerate(data_loader):
             if i % 10 == 0:
                 print(f"Processing event {i+1}/{len(data_loader)}")
-            eps_range = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.5, 1.0]
             for eps in eps_range:
-                cluster = run_inference_and_clustering(data, model, device, eps=eps)
+                cluster = run_inference_and_clustering(data, model, device, eps=eps, min_samples=min_samples)
                 cluster_labels = cluster.labels_
-                rates.append(validate_model(data, cluster_labels))
+                rates.append(validate_model(data, cluster_labels, purity_threshold=purity_threshold))
 
         make_epsilon_validation_plot(eps_range, rates, args.output)
         print(f"Epsilon validation plots saved to: {args.output}/")
         return
 
-    pt_bins = np.linspace(0.5, 2, 50)
-    eta_bins = np.linspace(-4, 4, 50)
+    # Get binning parameters from config
+    pt_bins = np.linspace(
+        config.get('pt_bins_start', 0.5),
+        config.get('pt_bins_end', 2.0),
+        config.get('pt_bins_count', 50)
+    )
+    eta_bins = np.linspace(
+        config.get('eta_bins_start', -4),
+        config.get('eta_bins_end', 4),
+        config.get('eta_bins_count', 50)
+    )
 
     print(f"PT bins: {len(pt_bins)-1} bins from {pt_bins[0]:.2f} to {pt_bins[-1]:.2f} GeV")
     print(f"Eta bins: {len(eta_bins)-1} bins from {eta_bins[0]:.2f} to {eta_bins[-1]:.2f}")
@@ -121,16 +136,19 @@ def main():
 
     all_cluster_sizes = []  # Collect cluster sizes from all events
 
-    print(f"Processing {len(data_loader)} events with epsilon = {args.epsilon}")
-    eta_cut = (-2.5, 2.5)
+    print(f"Processing {len(data_loader)} events with epsilon = {args.epsilon if args.epsilon else config.get('dbscan_eps', 0.05)}")
+    
+    # Get epsilon from args, or fall back to config
+    epsilon = args.epsilon if args.epsilon is not None else config.get('dbscan_eps', 0.05)
+    eta_cut = config.get('eta_cut', (-2.5, 2.5))
     
     for i, data in enumerate(data_loader):
         if i % 10 == 0:
             print(f"Processing event {i+1}/{len(data_loader)}")
             
-        cluster = run_inference_and_clustering(data, model, device, eps=args.epsilon)
+        cluster = run_inference_and_clustering(data, model, device, eps=epsilon, min_samples=min_samples)
         cluster_labels = cluster.labels_
-        metrics = calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, eta_cut=eta_cut)
+        metrics = calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_threshold=purity_threshold, eta_cut=eta_cut)
 
         # Simply accumulate histograms
         hist_eff_num_pt += metrics['efficiency_numerator_pt']
@@ -204,11 +222,11 @@ def main():
         'duplicate_rate_err': dup_err_eta
     }
 
-    plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, args.output, args.epsilon)
+    plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, args.output, epsilon)
 
     # Plot cluster size histogram
     if all_cluster_sizes:
-        plot_cluster_size_histogram(all_cluster_sizes, args.output, args.epsilon)
+        plot_cluster_size_histogram(all_cluster_sizes, args.output, epsilon)
         print(f"\nCluster size statistics:")
         print(f"  Total clusters: {len(all_cluster_sizes)}")
         print(f"  Mean cluster size: {np.mean(all_cluster_sizes):.2f}")
@@ -218,7 +236,8 @@ def main():
     print("\n" + "="*60)
     print("PERFORMANCE SUMMARY")
     print("="*60)
-    print(f"Epsilon: {args.epsilon}")
+    print(f"Epsilon: {epsilon}")
+    print(f"Purity Threshold: {purity_threshold}")
     print(f"Events processed: {len(data_loader)}")
     print(f"Output directory: {args.output}")
     print("\nOverall averages:")
