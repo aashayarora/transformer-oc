@@ -70,15 +70,15 @@ class Trainer:
             verbose=True
         )
         # Determine device configuration
-        num_gpus = len(self.config.get('gpus', [1])) if isinstance(self.config.get('gpus'), list) else 1
+        num_gpus = len(self.config.get('gpus', [1])) if isinstance(self.config.get('gpus'), list) else self.config.get('gpus', 1)
         accelerator = 'gpu' if torch.cuda.is_available() and num_gpus > 0 else 'cpu'
-        
+
         trainer = pl.Trainer(
             max_epochs=self.config['epochs'],
             callbacks=[checkpoint_callback, early_stopping],
             logger=logger,
             accelerator=accelerator,
-            devices=self.config.get('gpus', [torch.cuda.device_count() if torch.cuda.is_available() else 0]),
+            devices=(self.config.get('gpus', [1]) if isinstance(self.config.get('gpus'), list) else self.config.get('gpus', 1)),
             strategy='ddp_find_unused_parameters_true' if (num_gpus > 1) else "auto",
             enable_progress_bar=True,
             check_val_every_n_epoch=self.config.get('check_val_every_n_epoch', 5),

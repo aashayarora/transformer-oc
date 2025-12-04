@@ -8,9 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 
-# from utils.object_condensation import ObjectCondensation
-from fastgraphcompute.object_condensation import ObjectCondensation
-from fastgraphcompute.torch_geometric_interface import row_splits_from_strict_batch as batch_to_rowsplits
+from utils.object_condensation import ObjectCondensation
+from utils.torch_geometric_interface import row_splits_from_strict_batch as batch_to_rowsplits
 
 import pytorch_lightning as pl
 
@@ -31,7 +30,6 @@ class TransformerOCModel(nn.Module):
             batch_first=True
         )
 
-        # Use ModuleList for manual layer iteration with skip connections
         self.transformer_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=self.hidden_dim,
@@ -94,7 +92,6 @@ class TransformerOCModel(nn.Module):
         
         padding_mask = torch.arange(max_nodes, device=device).unsqueeze(0) >= counts.unsqueeze(1)
         
-        # Apply transformer layers with skip connections from input
         x_transformed = x_padded
         for layer in self.transformer_layers:
             x_transformed = layer(x_transformed, src_key_padding_mask=padding_mask) + x_padded
@@ -135,9 +132,9 @@ class TransformerLightningModule(pl.LightningModule):
         self.criterion = ObjectCondensation(
             q_min=config.get('oc_q_min', 0.1),
             s_B=config.get('oc_s_B', 1.0),
-            # repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
-            # repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
-            # use_checkpointing=config.get('oc_use_checkpointing', False)
+            repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
+            repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
+            use_checkpointing=config.get('oc_use_checkpointing', False)
         )
     
     def training_step(self, data):
@@ -148,8 +145,8 @@ class TransformerLightningModule(pl.LightningModule):
         model_out = self.model(x, batch)
 
         L_att, L_rep, L_beta, _, _ = self.criterion(
-            beta = model_out["B"],
-            coords = model_out["H"],
+            beta=model_out["B"].float(),
+            coords=model_out["H"].float(),
             asso_idx = sim_index.unsqueeze(-1).to(torch.int64),
             row_splits = row_splits
         )
@@ -178,8 +175,8 @@ class TransformerLightningModule(pl.LightningModule):
         model_out = self.model(x, batch)
 
         L_att, L_rep, L_beta, _, _ = self.criterion(
-            beta = model_out["B"],
-            coords = model_out["H"],
+            beta=model_out["B"].float(),
+            coords=model_out["H"].float(),
             asso_idx = sim_index.unsqueeze(-1).to(torch.int64),
             row_splits = row_splits
         )

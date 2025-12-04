@@ -4,7 +4,7 @@
 #   name: ml-tracking-pvc
 #   namespace: cern-cms-gpu-tracking
 # spec:
-#   storageClassName: rook-cephfs
+#   storageClassName: rook-cephfs-ucsd
 #   accessModes:
 #   - ReadWriteMany
 #   resources:

@@ -159,7 +159,7 @@ def plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, outp
                        fmt='o', color='red', label='Fake Rate', capsize=3)
     axes[0, 1].set_xlabel('Sim $p_T$ [GeV]')
     axes[0, 1].set_ylabel('Fake Rate')
-    axes[0, 1].set_yscale('log')
+    # axes[0, 1].set_yscale('log')
     axes[0, 1].set_title('Fake Rate vs $p_T$')
     
     axes[0, 2].errorbar(pt_centers, metrics_pt['purity'], yerr=metrics_pt['purity_err'], 
@@ -188,7 +188,7 @@ def plot_performance_histograms(pt_bins, eta_bins, metrics_pt, metrics_eta, outp
                        fmt='o', color='red', label='Fake Rate', capsize=3)
     axes[1, 1].set_xlabel('Sim $η$')
     axes[1, 1].set_ylabel('Fake Rate')
-    axes[1, 1].set_yscale('log')
+    # axes[1, 1].set_yscale('log')
     axes[1, 1].set_title('Fake Rate vs $η$')
     
     axes[1, 2].errorbar(eta_centers, metrics_eta['purity'], yerr=metrics_eta['purity_err'], 

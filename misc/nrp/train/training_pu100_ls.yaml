@@ -1,0 +1,121 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-tracking-pu100-ls-config
+  namespace: cern-cms-gpu-tracking
+data:
+  config.yaml: |
+    train_data_dir: /data/pu100_ls/train
+    val_data_dir: /data/pu100_ls/val
+
+    train_subset: null
+    val_subset: null
+
+    model: transformer
+
+    hidden_dim: 128
+    num_layers: 6        
+    nhead: 16        
+    latent_dim: 128      
+    dropout: 0.1
+
+    learning_rate: 0.0003  
+    weight_decay: 0.0001   
+    epochs: 50
+    batch_size: 1
+    num_workers: 4
+
+    scheduler_gamma: 0.5
+    scheduler_milestones: [15, 30, 40]
+
+    early_stopping_patience: 15
+
+    gradient_clip_val: 1.0
+    gradient_clip_algorithm: norm
+    accumulate_grad_batches: 2
+    check_val_every_n_epoch: 5
+    precision: 16
+
+    oc_q_min: 0.1
+    oc_s_B: 1.0
+    oc_repulsive_chunk_size: 4
+    oc_use_checkpointing: false
+
+    loss_weight_attractive: 1.0
+    loss_weight_repulsive: 1.0
+    loss_weight_beta: 0.1
+
+    output_dir: ./output
+    save_every: 100
+    resume: null
+
+    seed: 42
+    num_cpu_threads: 64
+    gpus:
+      - [1, 2, 3, 4]
+
+    dbscan_eps: 0.05
+    dbscan_min_samples: 2
+
+    purity_threshold: 0.75
+    eta_cut: null
+
+    pt_bins_start: 0.5
+    pt_bins_end: 2.0
+    pt_bins_count: 50
+    eta_bins_start: -4
+    eta_bins_end: 4
+    eta_bins_count: 50
+
+    epsilon_validation_values: [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.5, 1.0]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-tracking-pu100-ls
+  namespace: cern-cms-gpu-tracking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-tracking-pu100-ls
+  template:
+    metadata:
+      labels:
+        app: ml-tracking-pu100-ls
+    spec:
+      containers:
+      - name: ml-tracking-pu100-ls-container
+        image: aaarora/ml-tracking:latest
+        #args: ["python3", "src/main.py", "--config", "/home/config.yaml"]
+        args: ["sleep", "infinity"]
+        resources:
+          limits:
+            memory: 32Gi
+            cpu: 12
+            nvidia.com/rtxa6000: 1
+          requests:
+            memory: 16Gi
+            cpu: 8  
+            nvidia.com/rtxa6000: 1
+        volumeMounts:
+        - mountPath: /data
+          name: ml-tracking-pu100-ls-pvc
+        - mountPath: /dev/shm
+          name: dshm
+        - mountPath: /home/config.yaml
+          subPath: config.yaml
+          name: ml-tracking-pu100-ls-config-volume
+      volumes:
+        - name: ml-tracking-pu100-ls-pvc
+          persistentVolumeClaim:
+            claimName: ml-tracking-pvc
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+        - name: ml-tracking-pu100-ls-config-volume
+          configMap:
+            name: ml-tracking-pu100-ls-config
+      restartPolicy: Always
