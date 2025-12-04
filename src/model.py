@@ -120,7 +120,6 @@ class TransformerLightningModule(pl.LightningModule):
         self.loss_weight_attractive = config.get('loss_weight_attractive', 1.0)
         self.loss_weight_repulsive = config.get('loss_weight_repulsive', 0.1)
         self.loss_weight_beta = config.get('loss_weight_beta', 1.0)
-        self.loss_weight_aux = config.get('loss_weight_aux', 1.0)  # Auxiliary noise/signal supervision
         
         self.criterion = ObjectCondensation(
             q_min=config.get('oc_q_min', 0.1),
@@ -146,13 +145,9 @@ class TransformerLightningModule(pl.LightningModule):
             row_splits = row_splits
         )
         
-        is_noise = (sim_index < 0).float().unsqueeze(-1)  # 1 for noise, 0 for signal
-        L_aux = (is_noise * beta.pow(2)).mean()  # noise beta → 0
-    
         tot_loss_batch = (self.loss_weight_attractive * L_att + 
                          self.loss_weight_repulsive * L_rep + 
-                         self.loss_weight_beta * L_beta +
-                         self.loss_weight_aux * L_aux)
+                         self.loss_weight_beta * L_beta)
 
         self.log('train_loss', tot_loss_batch, on_step=True, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_attractive', L_att, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
@@ -183,13 +178,9 @@ class TransformerLightningModule(pl.LightningModule):
             row_splits = row_splits
         )
         
-        is_noise = (sim_index < 0).float().unsqueeze(-1)  # 1 for noise, 0 for signal
-        L_aux = (is_noise * beta.pow(2)).mean()  # noise beta → 0
-    
         tot_loss_batch = (self.loss_weight_attractive * L_att + 
                          self.loss_weight_repulsive * L_rep + 
-                         self.loss_weight_beta * L_beta +
-                         self.loss_weight_aux * L_aux)
+                         self.loss_weight_beta * L_beta)
 
         self.log('val_loss', tot_loss_batch, on_step=False, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_attractive', L_att, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
