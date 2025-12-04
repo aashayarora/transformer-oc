@@ -35,7 +35,8 @@ def main():
     print(f"Loaded dataset with {len(dataset)} graphs")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+    use_fp16 = device.type == 'cuda'  # Only use FP16 on CUDA
+    print(f"Using device: {device}, FP16: {use_fp16}")
 
     num_node_features = dataset[0].num_node_features
 
@@ -93,7 +94,7 @@ def main():
             if i % 10 == 0:
                 print(f"Processing event {i+1}/{len(data_loader)}")
             for eps in eps_range:
-                cluster = run_inference_and_clustering(data, model, device, eps=eps, min_samples=min_samples)
+                cluster = run_inference_and_clustering(data, model, device, eps=eps, min_samples=min_samples, use_fp16=use_fp16)
                 cluster_labels = cluster.labels_
                 rates.append(validate_model(data, cluster_labels, purity_threshold=purity_threshold))
 
@@ -146,7 +147,7 @@ def main():
         if i % 10 == 0:
             print(f"Processing event {i+1}/{len(data_loader)}")
             
-        cluster = run_inference_and_clustering(data, model, device, eps=epsilon, min_samples=min_samples)
+        cluster = run_inference_and_clustering(data, model, device, eps=epsilon, min_samples=min_samples, use_fp16=use_fp16)
         cluster_labels = cluster.labels_
         metrics = calculate_tracking_metrics(data, cluster_labels, pt_bins, eta_bins, purity_threshold=purity_threshold, eta_cut=eta_cut)
 

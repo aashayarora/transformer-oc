@@ -12,13 +12,20 @@ import mplhep as hep
 hep.style.use(hep.style.ROOT)
 
 @torch.no_grad()
-def run_inference_and_clustering(data, model, device, eps=0.2, min_samples=2):
+def run_inference_and_clustering(data, model, device, eps=0.2, min_samples=2, use_fp16=False):
     x = data.x.to(device)
     batch = data.batch.to(device)
     
     model.eval()
-    out = model(x, batch)
-    X = out["H"].cpu().detach().numpy()
+    
+    if use_fp16 and device != 'cpu':
+        with torch.amp.autocast('cuda'):
+            out = model(x, batch)
+        X = out["H"].float().cpu().numpy()  # Convert back to FP32 for DBSCAN
+    else:
+        out = model(x, batch)
+        X = out["H"].cpu().detach().numpy()
+    
     cluster = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
     return cluster
 

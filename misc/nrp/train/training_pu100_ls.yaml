@@ -17,7 +17,7 @@ data:
     hidden_dim: 128
     num_layers: 6        
     nhead: 16        
-    latent_dim: 128      
+    latent_dim: 4      
     dropout: 0.1
 
     learning_rate: 0.0003  
@@ -46,14 +46,13 @@ data:
     loss_weight_repulsive: 1.0
     loss_weight_beta: 0.1
 
-    output_dir: ./output
-    save_every: 100
+    output_dir: /data/output/pu100_ls/
+    save_every: 5
     resume: null
 
     seed: 42
     num_cpu_threads: 64
-    gpus:
-      - [1, 2, 3, 4]
+    gpus: 4
 
     dbscan_eps: 0.05
     dbscan_min_samples: 2
@@ -88,17 +87,17 @@ spec:
       containers:
       - name: ml-tracking-pu100-ls-container
         image: aaarora/ml-tracking:latest
-        #args: ["python3", "src/main.py", "--config", "/home/config.yaml"]
-        args: ["sleep", "infinity"]
+        args: ["python3", "src/main.py", "--config", "/home/config.yaml"]
+        # args: ["sleep", "infinity"]
         resources:
           limits:
             memory: 32Gi
             cpu: 12
-            nvidia.com/rtxa6000: 1
+            nvidia.com/rtxa6000: 4
           requests:
             memory: 16Gi
             cpu: 8  
-            nvidia.com/rtxa6000: 1
+            nvidia.com/rtxa6000: 4
         volumeMounts:
         - mountPath: /data
           name: ml-tracking-pu100-ls-pvc

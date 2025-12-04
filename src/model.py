@@ -21,15 +21,6 @@ class TransformerOCModel(nn.Module):
         self.latent_dim = latent_dim
         self.num_layers = num_layers
 
-        self.transformer_encoder_layer = nn.TransformerEncoderLayer(
-            d_model=self.hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=self.hidden_dim * 2,
-            dropout=dropout,
-            activation='relu',
-            batch_first=True
-        )
-
         self.transformer_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=self.hidden_dim,

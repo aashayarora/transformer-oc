@@ -34,7 +34,6 @@ spec:
         volumeMounts:
         - mountPath: /data
           name: ml-tracking-pvc
-          readOnly: true
       volumes:
         - name: ml-tracking-pvc
           persistentVolumeClaim:

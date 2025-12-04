@@ -1,5 +1,5 @@
-train_data_dir: ./data/pu100/train
-val_data_dir: ./data/pu100/val
+train_data_dir: ./data/muonG/train
+val_data_dir: ./data/muonG/train
 train_subset: null
 val_subset: null
 
@@ -8,13 +8,13 @@ model: transformer
 hidden_dim: 128
 num_layers: 6        
 nhead: 16        
-latent_dim: 128      
+latent_dim: 4      
 dropout: 0.1
 
 learning_rate: 0.0003  
 weight_decay: 0.0001   
 epochs: 50
-batch_size: 1
+batch_size: 32
 num_workers: 4
 
 scheduler_gamma: 0.5
@@ -30,7 +30,7 @@ precision: 16
 
 oc_q_min: 0.1
 oc_s_B: 1.0
-oc_repulsive_chunk_size: 4
+oc_repulsive_chunk_size: 32
 oc_use_checkpointing: false
 
 loss_weight_attractive: 1.0
