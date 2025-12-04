@@ -79,7 +79,7 @@ class Trainer:
             logger=logger,
             accelerator=accelerator,
             devices=(self.config.get('gpus', [1]) if isinstance(self.config.get('gpus'), list) else self.config.get('gpus', 1)),
-            strategy='ddp_find_unused_parameters_true' if (num_gpus > 1) else "auto",
+            strategy="auto",
             enable_progress_bar=True,
             check_val_every_n_epoch=self.config.get('check_val_every_n_epoch', 5),
             log_every_n_steps=5,
