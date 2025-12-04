@@ -153,12 +153,11 @@ class TransformerLightningModule(pl.LightningModule):
         self.log('train_loss_attractive', L_att, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_repulsive', L_rep, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_beta', L_beta, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
-        self.log('train_loss_aux', L_aux, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         
         current_lr = self.optimizers().param_groups[0]['lr']
         self.log('learning_rate', current_lr, on_step=True, on_epoch=False, prog_bar=True, sync_dist=False)
         
-        del model_out, L_att, L_rep, L_beta, L_aux
+        del model_out, L_att, L_rep, L_beta
         
         return tot_loss_batch
 
@@ -186,9 +185,8 @@ class TransformerLightningModule(pl.LightningModule):
         self.log('val_loss_attractive', L_att, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_repulsive', L_rep, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_beta', L_beta, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
-        self.log('val_loss_aux', L_aux, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
 
-        del model_out, L_att, L_rep, L_beta, L_aux
+        del model_out, L_att, L_rep, L_beta
         
         return tot_loss_batch
     
