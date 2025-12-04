@@ -8,7 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 
-from utils.object_condensation import ObjectCondensation
+# from utils.object_condensation import ObjectCondensation
+from fastgraphcompute.object_condensation import ObjectCondensation
 from utils.torch_geometric_interface import row_splits_from_strict_batch as batch_to_rowsplits
 
 import pytorch_lightning as pl
@@ -57,7 +58,7 @@ class TransformerOCModel(nn.Module):
         
         with torch.no_grad():
             self.beta_head[-1].weight.mul_(0.1)
-            self.beta_head[-1].bias.fill_(-1.0)
+            self.beta_head[-1].bias.fill_(-3.0)
             
             nn.init.xavier_uniform_(self.latent_head[0].weight)
             nn.init.zeros_(self.latent_head[0].bias)
@@ -119,13 +120,14 @@ class TransformerLightningModule(pl.LightningModule):
         self.loss_weight_attractive = config.get('loss_weight_attractive', 1.0)
         self.loss_weight_repulsive = config.get('loss_weight_repulsive', 0.1)
         self.loss_weight_beta = config.get('loss_weight_beta', 1.0)
+        self.loss_weight_aux = config.get('loss_weight_aux', 1.0)  # Auxiliary noise/signal supervision
         
         self.criterion = ObjectCondensation(
             q_min=config.get('oc_q_min', 0.1),
             s_B=config.get('oc_s_B', 1.0),
-            repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
-            repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
-            use_checkpointing=config.get('oc_use_checkpointing', False)
+            # repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
+            # repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
+            # use_checkpointing=config.get('oc_use_checkpointing', False)
         )
     
     def training_step(self, data):
@@ -134,27 +136,34 @@ class TransformerLightningModule(pl.LightningModule):
         row_splits = batch_to_rowsplits(batch)
         
         model_out = self.model(x, batch)
+        beta = model_out["B"].float()
+        coords = model_out["H"].float()
 
         L_att, L_rep, L_beta, _, _ = self.criterion(
-            beta=model_out["B"].float(),
-            coords=model_out["H"].float(),
+            beta=beta,
+            coords=coords,
             asso_idx = sim_index.unsqueeze(-1).to(torch.int64),
             row_splits = row_splits
         )
+        
+        is_noise = (sim_index < 0).float().unsqueeze(-1)  # 1 for noise, 0 for signal
+        L_aux = (is_noise * beta.pow(2)).mean()  # noise beta → 0
     
         tot_loss_batch = (self.loss_weight_attractive * L_att + 
                          self.loss_weight_repulsive * L_rep + 
-                         self.loss_weight_beta * L_beta)
+                         self.loss_weight_beta * L_beta +
+                         self.loss_weight_aux * L_aux)
 
         self.log('train_loss', tot_loss_batch, on_step=True, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_attractive', L_att, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_repulsive', L_rep, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
-        self.log('train_loss_noise', L_beta, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        self.log('train_loss_beta', L_beta, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        self.log('train_loss_aux', L_aux, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         
         current_lr = self.optimizers().param_groups[0]['lr']
         self.log('learning_rate', current_lr, on_step=True, on_epoch=False, prog_bar=True, sync_dist=False)
         
-        del model_out, L_att, L_rep, L_beta
+        del model_out, L_att, L_rep, L_beta, L_aux
         
         return tot_loss_batch
 
@@ -164,24 +173,31 @@ class TransformerLightningModule(pl.LightningModule):
         row_splits = batch_to_rowsplits(batch)
 
         model_out = self.model(x, batch)
+        beta = model_out["B"].float()
+        coords = model_out["H"].float()
 
         L_att, L_rep, L_beta, _, _ = self.criterion(
-            beta=model_out["B"].float(),
-            coords=model_out["H"].float(),
+            beta=beta,
+            coords=coords,
             asso_idx = sim_index.unsqueeze(-1).to(torch.int64),
             row_splits = row_splits
         )
+        
+        is_noise = (sim_index < 0).float().unsqueeze(-1)  # 1 for noise, 0 for signal
+        L_aux = (is_noise * beta.pow(2)).mean()  # noise beta → 0
     
         tot_loss_batch = (self.loss_weight_attractive * L_att + 
                          self.loss_weight_repulsive * L_rep + 
-                         self.loss_weight_beta * L_beta)
+                         self.loss_weight_beta * L_beta +
+                         self.loss_weight_aux * L_aux)
 
         self.log('val_loss', tot_loss_batch, on_step=False, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_attractive', L_att, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_repulsive', L_rep, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
-        self.log('val_loss_noise', L_beta, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        self.log('val_loss_beta', L_beta, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        self.log('val_loss_aux', L_aux, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
 
-        del model_out, L_att, L_rep, L_beta
+        del model_out, L_att, L_rep, L_beta, L_aux
         
         return tot_loss_batch
     
