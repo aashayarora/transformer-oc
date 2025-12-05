@@ -118,7 +118,7 @@ class TransformerLightningModule(pl.LightningModule):
         self.scheduler_gamma = config['scheduler_gamma']
         
         self.loss_weight_attractive = config.get('loss_weight_attractive', 1.0)
-        self.loss_weight_repulsive = config.get('loss_weight_repulsive', 0.1)
+        self.loss_weight_repulsive = config.get('loss_weight_repulsive', 1.0)
         self.loss_weight_beta = config.get('loss_weight_beta', 1.0)
         
         self.criterion = ObjectCondensation(
