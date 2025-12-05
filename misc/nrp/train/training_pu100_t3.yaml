@@ -15,30 +15,30 @@ data:
     model: transformer
 
     hidden_dim: 128
-    num_layers: 6        
+    num_layers: 4        
     nhead: 16        
     latent_dim: 4     
     dropout: 0.1
 
-    learning_rate: 0.0003  
+    learning_rate: 0.0001  
     weight_decay: 0.0001   
-    epochs: 50
-    batch_size: 1
+    epochs: 100
+    batch_size: 4
     num_workers: 4
 
     scheduler_gamma: 0.5
-    scheduler_milestones: [15, 30, 40]
+    scheduler_milestones: [50, 75, 100]
 
     early_stopping_patience: 15
 
     gradient_clip_val: 1.0
     gradient_clip_algorithm: norm
-    accumulate_grad_batches: 2
+    accumulate_grad_batches: 8
     check_val_every_n_epoch: 5
     precision: 16
 
     oc_q_min: 0.1
-    oc_s_B: 1.0
+    oc_s_B: 5.0
     oc_repulsive_chunk_size: 4
     oc_use_checkpointing: false
 
@@ -92,11 +92,11 @@ spec:
           limits:
             memory: 32Gi
             cpu: 12
-            nvidia.com/a10: 1
+            nvidia.com/rtxa6000: 1
           requests:
             memory: 16Gi
             cpu: 8  
-            nvidia.com/a10: 1
+            nvidia.com/rtxa6000: 1
         volumeMounts:
         - mountPath: /data
           name: ml-tracking-pu100-t3-pvc
@@ -116,4 +116,3 @@ spec:
         - name: ml-tracking-pu100-t3-config-volume
           configMap:
             name: ml-tracking-pu100-t3-config
-      restartPolicy: Always

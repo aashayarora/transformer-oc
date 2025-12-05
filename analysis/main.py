@@ -2,6 +2,7 @@ import os
 from glob import glob
 import numpy as np
 from argparse import ArgumentParser
+import pathlib
 
 import torch
 from torch_geometric.loader import DataLoader
@@ -68,19 +69,28 @@ def main():
         
     model.to(device)
     
-    output = args.output + '/final_model.ckpt'
+    if ".pt" in args.output:
+        output = args.output
+    else:
+        output = args.output + '/final_model.ckpt'
+
+    args.output = args.output if not args.output.endswith('.ckpt') else str(pathlib.Path(args.output).parent)
 
     if not os.path.exists(output):
         output = sorted(glob(os.path.join(args.output, 'checkpoints', '*.ckpt')))[-1]
 
     print(f"Loading model from: {output}")
 
-    state_dict = torch.load(output, weights_only=True)['state_dict']
+    state_dict = torch.load(output, weights_only=True)
 
     if any(key.startswith('model.') for key in state_dict.keys()):
         state_dict = {key.replace('model.', '', 1): value for key, value in state_dict.items()}
 
-    model.load_state_dict(state_dict)
+    try:
+        model.load_state_dict(state_dict)['state_dict']
+    except:
+        model.load_state_dict(state_dict)
+
     model.eval()
 
     # Get DBSCAN and purity parameters from config (needed for both epsilon validation and regular inference)

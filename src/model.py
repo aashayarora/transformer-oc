@@ -29,7 +29,8 @@ class TransformerOCModel(nn.Module):
                 dim_feedforward=self.hidden_dim * 2,
                 dropout=dropout,
                 activation='relu',
-                batch_first=True
+                batch_first=True,
+                norm_first=True
             ) for _ in range(num_layers)
         ])
 

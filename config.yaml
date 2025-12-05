@@ -1,20 +1,20 @@
 train_data_dir: ./data/pu100_t3/train
 val_data_dir: ./data/pu100_t3/val
-train_subset: null
-val_subset: null
+train_subset: 100
+val_subset: 10
 
 model: transformer
 
-hidden_dim: 64
-num_layers: 4       
-nhead: 8    
+hidden_dim: 128
+num_layers: 4     
+nhead: 16
 latent_dim: 4  
 dropout: 0.1
 
-learning_rate: 0.0003  
+learning_rate: 0.0001  
 weight_decay: 0.0001   
 epochs: 50
-batch_size: 1
+batch_size: 4
 num_workers: 4
 
 scheduler_gamma: 0.5
@@ -24,22 +24,19 @@ early_stopping_patience: 15
 
 gradient_clip_val: 1.0
 gradient_clip_algorithm: norm
-accumulate_grad_batches: 2
+accumulate_grad_batches: 8
 check_val_every_n_epoch: 5
 precision: 16
 
 oc_q_min: 0.1
-oc_s_B: 0.1
-oc_repulsive_chunk_size: 32
-oc_use_checkpointing: false
+oc_s_B: 5.0
 
 loss_weight_attractive: 1.0
 loss_weight_repulsive: 1.0
 loss_weight_beta: 1.0
-loss_weight_aux: 0.0  # Disabled - aux loss hurts clustering performance
 
 output_dir: ./output
-save_every: 100
+save_every: 10
 resume: null
 
 seed: 42
