@@ -15,36 +15,37 @@ data:
     model: transformer
 
     hidden_dim: 128
-    num_layers: 6        
+    num_layers: 4        
     nhead: 16        
-    latent_dim: 4      
+    latent_dim: 4     
     dropout: 0.1
 
-    learning_rate: 0.0003  
+    learning_rate: 0.0001  
     weight_decay: 0.0001   
-    epochs: 50
-    batch_size: 1
+    epochs: 100
+    batch_size: 4
     num_workers: 4
 
     scheduler_gamma: 0.5
-    scheduler_milestones: [15, 30, 40]
+    scheduler_milestones: [50, 75, 100]
 
     early_stopping_patience: 15
 
     gradient_clip_val: 1.0
     gradient_clip_algorithm: norm
-    accumulate_grad_batches: 2
+    accumulate_grad_batches: 8
     check_val_every_n_epoch: 5
     precision: 16
 
     oc_q_min: 0.1
-    oc_s_B: 1.0
+    oc_s_B: 5.0
     oc_repulsive_chunk_size: 4
     oc_use_checkpointing: false
 
     loss_weight_attractive: 1.0
     loss_weight_repulsive: 1.0
-    loss_weight_beta: 0.1
+    loss_weight_beta: 1.0
+    loss_weight_chi2: 0.5
 
     output_dir: /data/output/pu100_ls/
     save_every: 5
@@ -52,7 +53,7 @@ data:
 
     seed: 42
     num_cpu_threads: 64
-    gpus: 4
+    gpus: 1
 
     dbscan_eps: 0.05
     dbscan_min_samples: 2
@@ -70,15 +71,11 @@ data:
     epsilon_validation_values: [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.5, 1.0]
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: Job
 metadata:
   name: ml-tracking-pu100-ls
   namespace: cern-cms-gpu-tracking
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ml-tracking-pu100-ls
   template:
     metadata:
       labels:
@@ -88,16 +85,15 @@ spec:
       - name: ml-tracking-pu100-ls-container
         image: aaarora/ml-tracking:latest
         args: ["python3", "src/main.py", "--config", "/home/config.yaml"]
-        # args: ["sleep", "infinity"]
         resources:
           limits:
             memory: 32Gi
             cpu: 12
-            nvidia.com/rtxa6000: 4
+            nvidia.com/rtxa6000: 1
           requests:
             memory: 16Gi
             cpu: 8  
-            nvidia.com/rtxa6000: 4
+            nvidia.com/rtxa6000: 1
         volumeMounts:
         - mountPath: /data
           name: ml-tracking-pu100-ls-pvc
@@ -117,4 +113,4 @@ spec:
         - name: ml-tracking-pu100-ls-config-volume
           configMap:
             name: ml-tracking-pu100-ls-config
-      restartPolicy: Always
+      restartPolicy: Never

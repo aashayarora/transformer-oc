@@ -131,12 +131,6 @@ class TransformerLightningModule(pl.LightningModule):
         )
     
     def compute_chi2_loss(self, x, sim_index, batch):
-        """
-        Physics-informed chi-squared loss: penalize tracks that don't fit physical trajectories.
-        For charged particles in a magnetic field:
-        - Transverse plane: circular/helical motion (constant curvature from pT)
-        - Longitudinal: linear in eta (straight line in eta-phi projection)
-        """
         pt = x[:, 0]
         eta = x[:, 1]
         phi = x[:, 2]
@@ -184,7 +178,6 @@ class TransformerLightningModule(pl.LightningModule):
                     slope = numerator / denominator
                     intercept = eta_mean - slope * phi_mean
                     
-                    # Residuals
                     eta_pred = slope * phi_unwrapped + intercept
                     eta_chi2 = ((track_eta - eta_pred) ** 2).sum() / (n_hits - 2 + 1e-6)
                 else:

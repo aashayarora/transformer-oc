@@ -1,44 +1,37 @@
 ---
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Pod
 metadata:
   name: ml-tracking-tensorboard
   namespace: cern-cms-gpu-tracking
+  labels:
+    app: ml-tracking-tensorboard
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ml-tracking-tensorboard
-  template:
-    metadata:
-      labels:
-        app: ml-tracking-tensorboard
-    spec:
-      containers:
-      - name: tensorboard
-        image: aaarora/tensorboard:latest
-        ports:
-        - containerPort: 6006
-          name: tensorboard
-          protocol: TCP
-        - containerPort: 8080
-          name: nginx
-          protocol: TCP
-        resources:
-          limits:
-            memory: 1Gi
-            cpu: 1
-          requests:
-            memory: 1Gi
-            cpu: 1
-        volumeMounts:
-        - mountPath: /data
-          name: ml-tracking-pvc
-      volumes:
-        - name: ml-tracking-pvc
-          persistentVolumeClaim:
-            claimName: ml-tracking-pvc
-      restartPolicy: Always
+  containers:
+  - name: tensorboard
+    image: aaarora/tensorboard:latest
+    ports:
+    - containerPort: 6006
+      name: tensorboard
+      protocol: TCP
+    - containerPort: 8080
+      name: nginx
+      protocol: TCP
+    resources:
+      limits:
+        memory: 1Gi
+        cpu: 1
+      requests:
+        memory: 1Gi
+        cpu: 1
+    volumeMounts:
+    - mountPath: /data
+      name: ml-tracking-pvc
+  volumes:
+    - name: ml-tracking-pvc
+      persistentVolumeClaim:
+        claimName: ml-tracking-pvc
+  restartPolicy: Always
 ---
 apiVersion: v1
 kind: Service

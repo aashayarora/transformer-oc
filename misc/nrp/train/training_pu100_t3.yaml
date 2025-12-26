@@ -12,11 +12,13 @@ data:
     train_subset: null
     val_subset: null
 
+    debug: true
+
     model: transformer
 
-    hidden_dim: 128
+    hidden_dim: 256
     num_layers: 4        
-    nhead: 16        
+    nhead: 8        
     latent_dim: 4     
     dropout: 0.1
 
@@ -44,7 +46,8 @@ data:
 
     loss_weight_attractive: 1.0
     loss_weight_repulsive: 1.0
-    loss_weight_beta: 0.1
+    loss_weight_beta: 1.0
+    loss_weight_chi2: 0.5
 
     output_dir: /data/output/pu100_t3/
     save_every: 5
@@ -69,16 +72,12 @@ data:
 
     epsilon_validation_values: [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.5, 1.0]
 ---
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
   name: ml-tracking-pu100-t3
   namespace: cern-cms-gpu-tracking
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ml-tracking-pu100-t3
   template:
     metadata:
       labels:
@@ -116,3 +115,5 @@ spec:
         - name: ml-tracking-pu100-t3-config-volume
           configMap:
             name: ml-tracking-pu100-t3-config
+      restartPolicy: Never
+            
