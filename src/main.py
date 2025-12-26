@@ -53,15 +53,16 @@ class Trainer:
         logger = TensorBoardLogger(
             save_dir=self.config['output_dir']
         )
+        debug_mode = self.config.get('debug', False)
         checkpoint_callback = ModelCheckpoint(
             dirpath=logger.log_dir + '/checkpoints',
-            filename='model-{epoch:06d}-{step:06d}-{train_loss:.2f}',
-            monitor='train_loss',
+            filename='ckpt-{epoch:03d}',
+            monitor='train_loss' if debug_mode else 'val_loss',
             mode='min',
-            save_top_k=3,
+            save_top_k=-1 if debug_mode else 3,
             save_last=True,
-            every_n_train_steps=self.config.get('save_every', 5),
-            save_on_train_epoch_end=False
+            every_n_epochs=1 if debug_mode else self.config.get('save_every', 5),
+            save_on_train_epoch_end=True
         )
         early_stopping = EarlyStopping(
             monitor='val_loss',
@@ -69,7 +70,7 @@ class Trainer:
             mode='min',
             verbose=True
         )
-        # Determine device configuration
+
         num_gpus = len(self.config.get('gpus', [1])) if isinstance(self.config.get('gpus'), list) else self.config.get('gpus', 1)
         accelerator = 'gpu' if torch.cuda.is_available() and num_gpus > 0 else 'cpu'
 
