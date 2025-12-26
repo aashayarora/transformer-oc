@@ -102,101 +102,58 @@ class TransformerOCModel(nn.Module):
 class TransformerLightningModule(pl.LightningModule):
     def __init__(self, config, input_dim):
         super().__init__()
-        self.save_hyperparameters(config)
+        
+        hparams = {
+            'input_dim': input_dim,
+            'hidden_dim': config.get('hidden_dim', config.get('d_model', 128)),
+            'num_layers': config['num_layers'],
+            'num_heads': config['nhead'],
+            'latent_dim': config['latent_dim'],
+            'dropout': config.get('dropout', 0.1),
+            
+            'learning_rate': config['learning_rate'],
+            'weight_decay': config['weight_decay'],
+            'scheduler_gamma': config['scheduler_gamma'],
+            'scheduler_milestones': config.get('scheduler_milestones', [10]),
+            
+            'loss_weight_attractive': config.get('loss_weight_attractive', 1.0),
+            'loss_weight_repulsive': config.get('loss_weight_repulsive', 1.0),
+            'loss_weight_beta': config.get('loss_weight_beta', 1.0),
+            
+            'oc_q_min': config.get('oc_q_min', 0.1),
+            'oc_s_B': config.get('oc_s_B', 1.0),
+            
+            'batch_size': config.get('batch_size', 1),
+            'epochs': config.get('epochs', 100),
+            'gradient_clip_val': config.get('gradient_clip_val', 1.0),
+            'accumulate_grad_batches': config.get('accumulate_grad_batches', 1),
+            'precision': config.get('precision', 32),
+            
+            'train_subset': config.get('train_subset', None),
+            'val_subset': config.get('val_subset', None),
+            
+            'seed': config.get('seed', 42),
+        }
+        self.save_hyperparameters(hparams)
+        
+        self.config = config
         
         self.model = TransformerOCModel(
             input_dim=input_dim,
-            hidden_dim=config.get('hidden_dim', config.get('d_model', 128)),
-            num_layers=config['num_layers'],
-            num_heads=config['nhead'],
-            latent_dim=config['latent_dim'],
-            dropout=config.get('dropout', 0.1),
+            hidden_dim=self.hparams.hidden_dim,
+            num_layers=self.hparams.num_layers,
+            num_heads=self.hparams.num_heads,
+            latent_dim=self.hparams.latent_dim,
+            dropout=self.hparams.dropout,
         )
-
-        self.learning_rate = config['learning_rate']
-        self.weight_decay = config['weight_decay']
-        self.scheduler_gamma = config['scheduler_gamma']
-        
-        self.loss_weight_attractive = config.get('loss_weight_attractive', 1.0)
-        self.loss_weight_repulsive = config.get('loss_weight_repulsive', 1.0)
-        self.loss_weight_beta = config.get('loss_weight_beta', 1.0)
-        self.loss_weight_chi2 = config.get('loss_weight_chi2', 0.0)
         
         self.criterion = ObjectCondensation(
-            q_min=config.get('oc_q_min', 0.1),
-            s_B=config.get('oc_s_B', 1.0),
+            q_min=self.hparams.oc_q_min,
+            s_B=self.hparams.oc_s_B,
             # repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
             # repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
             # use_checkpointing=config.get('oc_use_checkpointing', False)
         )
-    
-    def compute_chi2_loss(self, x, sim_index, batch):
-        pt = x[:, 0]
-        eta = x[:, 1]
-        phi = x[:, 2]
-        
-        loss = 0.0
-        count = 0
-        
-        for graph_id in batch.unique():
-            mask = batch == graph_id
-            graph_pt = pt[mask]
-            graph_eta = eta[mask]
-            graph_phi = phi[mask]
-            graph_sim = sim_index[mask]
-            
-            valid_mask = graph_sim >= 0
-            if valid_mask.sum() == 0:
-                continue
-            
-            for track_id in graph_sim[valid_mask].unique():
-                track_mask = (graph_sim == track_id) & valid_mask
-                n_hits = track_mask.sum()
-                
-                if n_hits <= 2:
-                    continue
-                
-                track_pt = graph_pt[track_mask]
-                track_eta = graph_eta[track_mask]
-                track_phi = graph_phi[track_mask]
-                
-                pt_mean = track_pt.mean()
-                pt_chi2 = ((track_pt - pt_mean) ** 2).sum() / (pt_mean ** 2 + 1e-6)
-                
-                if n_hits >= 3:
-                    phi_unwrapped = track_phi.clone()
-                    phi_diff = phi_unwrapped[1:] - phi_unwrapped[:-1]
-                    phi_diff = torch.where(phi_diff > torch.pi, phi_diff - 2*torch.pi, phi_diff)
-                    phi_diff = torch.where(phi_diff < -torch.pi, phi_diff + 2*torch.pi, phi_diff)
-                    phi_unwrapped[1:] = phi_unwrapped[0] + torch.cumsum(phi_diff, dim=0)
-                    
-                    phi_mean = phi_unwrapped.mean()
-                    eta_mean = track_eta.mean()
-                    
-                    numerator = ((phi_unwrapped - phi_mean) * (track_eta - eta_mean)).sum()
-                    denominator = ((phi_unwrapped - phi_mean) ** 2).sum() + 1e-6
-                    slope = numerator / denominator
-                    intercept = eta_mean - slope * phi_mean
-                    
-                    eta_pred = slope * phi_unwrapped + intercept
-                    eta_chi2 = ((track_eta - eta_pred) ** 2).sum() / (n_hits - 2 + 1e-6)
-                else:
-                    eta_chi2 = torch.tensor(0.0, device=track_eta.device)
-                
-                if n_hits >= 3:
-                    phi_diffs = track_phi[1:] - track_phi[:-1]
-                    phi_diffs = torch.where(phi_diffs > torch.pi, phi_diffs - 2*torch.pi, phi_diffs)
-                    phi_diffs = torch.where(phi_diffs < -torch.pi, phi_diffs + 2*torch.pi, phi_diffs)
-                    
-                    phi_curvature_chi2 = phi_diffs.var() / (phi_diffs.mean().abs() + 1e-6)
-                else:
-                    phi_curvature_chi2 = torch.tensor(0.0, device=track_phi.device)
-                
-                total_chi2 = pt_chi2 + eta_chi2 + phi_curvature_chi2
-                loss += total_chi2 / 3.0 
-                count += 1
-        
-        return loss / (count + 1e-6)
     
     def training_step(self, data):
         x, sim_index, batch = data.x.to(self.device), data.sim_index.to(self.device), data.batch.to(self.device)
@@ -214,29 +171,22 @@ class TransformerLightningModule(pl.LightningModule):
             row_splits = row_splits
         )
         
-        # Physics-informed auxiliary loss
-        L_chi2 = torch.tensor(0.0, device=self.device)
-        
-        if self.loss_weight_chi2 > 0:
-            L_chi2 = self.compute_chi2_loss(x, sim_index, batch)
-        
-        tot_loss_batch = (self.loss_weight_attractive * L_att + 
-                         self.loss_weight_repulsive * L_rep + 
-                         self.loss_weight_beta * L_beta +
-                         self.loss_weight_chi2 * L_chi2)
+        tot_loss_batch = (self.hparams.loss_weight_attractive * L_att + 
+                         self.hparams.loss_weight_repulsive * L_rep + 
+                         self.hparams.loss_weight_beta * L_beta)
 
         self.log('train_loss', tot_loss_batch, on_step=True, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_attractive', L_att, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_repulsive', L_rep, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('train_loss_beta', L_beta, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         
-        if self.loss_weight_chi2 > 0:
-            self.log('train_loss_chi2', L_chi2, on_step=True, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
-        
         current_lr = self.optimizers().param_groups[0]['lr']
         self.log('learning_rate', current_lr, on_step=True, on_epoch=False, prog_bar=True, sync_dist=False)
         
-        del model_out, L_att, L_rep, L_beta, L_chi2
+        self.log('train_beta_mean', beta.mean(), on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        self.log('train_beta_std', beta.std(), on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        
+        del model_out, L_att, L_rep, L_beta
         
         return tot_loss_batch
 
@@ -256,26 +206,19 @@ class TransformerLightningModule(pl.LightningModule):
             row_splits = row_splits
         )
         
-        # Physics-informed auxiliary loss
-        L_chi2 = torch.tensor(0.0, device=self.device)
-        
-        if self.loss_weight_chi2 > 0:
-            L_chi2 = self.compute_chi2_loss(x, sim_index, batch)
-        
-        tot_loss_batch = (self.loss_weight_attractive * L_att + 
-                         self.loss_weight_repulsive * L_rep + 
-                         self.loss_weight_beta * L_beta +
-                         self.loss_weight_chi2 * L_chi2)
+        tot_loss_batch = (self.hparams.loss_weight_attractive * L_att + 
+                         self.hparams.loss_weight_repulsive * L_rep + 
+                         self.hparams.loss_weight_beta * L_beta)
 
         self.log('val_loss', tot_loss_batch, on_step=False, on_epoch=True, prog_bar=True, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_attractive', L_att, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_repulsive', L_rep, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         self.log('val_loss_beta', L_beta, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
         
-        if self.loss_weight_chi2 > 0:
-            self.log('val_loss_chi2', L_chi2, on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        self.log('val_beta_mean', beta.mean(), on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
+        self.log('val_beta_std', beta.std(), on_step=False, on_epoch=True, prog_bar=False, batch_size=data.num_graphs, sync_dist=True)
 
-        del model_out, L_att, L_rep, L_beta, L_chi2
+        del model_out, L_att, L_rep, L_beta
         
         return tot_loss_batch
     
@@ -290,11 +233,15 @@ class TransformerLightningModule(pl.LightningModule):
         self.log('grad_norm', total_norm, on_step=True, on_epoch=False, prog_bar=False)
     
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        optimizer = optim.AdamW(
+            self.parameters(), 
+            lr=self.hparams.learning_rate, 
+            weight_decay=self.hparams.weight_decay
+        )
         scheduler = MultiStepLR(
             optimizer,
-            milestones=self.hparams.get('scheduler_milestones', [10]),
-            gamma=self.scheduler_gamma
+            milestones=self.hparams.scheduler_milestones,
+            gamma=self.hparams.scheduler_gamma
         )
         
         return {
