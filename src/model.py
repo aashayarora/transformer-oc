@@ -17,7 +17,7 @@ import pytorch_lightning as pl
 class TransformerOCModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, num_heads, latent_dim, dropout=0.1):
         super().__init__()
-        
+
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.num_layers = num_layers
@@ -35,7 +35,7 @@ class TransformerOCModel(nn.Module):
         ])
 
         self.input_proj = nn.Linear(input_dim, hidden_dim)
-        
+
         self.latent_head = nn.Sequential(
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
@@ -65,6 +65,48 @@ class TransformerOCModel(nn.Module):
         nn.init.xavier_uniform_(self.latent_head[-1].weight)
         nn.init.zeros_(self.latent_head[-1].bias)
 
+    def compute_dr_mask(self, x_raw, batch, dr_threshold=0.2):
+        device = x_raw.device
+        batch_size = batch.max().item() + 1
+        
+        counts = torch.bincount(batch, minlength=batch_size)
+        max_nodes = counts.max().item()
+        
+        eta_norm = x_raw[:, 1]  # Normalized eta
+        phi_norm = x_raw[:, 2]  # Normalized phi
+        
+        eta_min, eta_max = -2.62, 2.62
+        phi_min, phi_max = -3.1416, 3.1416
+        
+        eta = eta_norm * (eta_max - eta_min) + eta_min
+        phi = phi_norm * (phi_max - phi_min) + phi_min
+        
+        eta_padded = torch.zeros(batch_size, max_nodes, device=device, dtype=x_raw.dtype)
+        phi_padded = torch.zeros(batch_size, max_nodes, device=device, dtype=x_raw.dtype)
+        
+        offsets = torch.zeros(batch_size + 1, device=device, dtype=torch.long)
+        offsets[1:] = counts.cumsum(0)
+        position_in_graph = torch.arange(len(batch), device=device) - offsets[batch]
+        
+        eta_padded[batch, position_in_graph] = eta
+        phi_padded[batch, position_in_graph] = phi
+        
+        deta = eta_padded.unsqueeze(2) - eta_padded.unsqueeze(1)  # [B, N, N]
+        dphi = phi_padded.unsqueeze(2) - phi_padded.unsqueeze(1)  # [B, N, N]
+        
+        dphi = torch.atan2(torch.sin(dphi), torch.cos(dphi))
+        
+        dr = torch.sqrt(deta**2 + dphi**2)
+        
+        attention_mask = dr > dr_threshold
+        
+        padding_mask = torch.arange(max_nodes, device=device).unsqueeze(0) >= counts.unsqueeze(1)
+        padding_mask_expanded = padding_mask.unsqueeze(1) | padding_mask.unsqueeze(2)
+        
+        attention_mask = attention_mask | padding_mask_expanded
+        
+        return attention_mask
+
     def forward(self, x_raw, batch):
         x = self.input_proj(x_raw)
         
@@ -82,11 +124,14 @@ class TransformerOCModel(nn.Module):
         
         x_padded[batch, position_in_graph] = x
         
+        attention_mask = self.compute_dr_mask(x_raw, batch, dr_threshold=0.2)
         padding_mask = torch.arange(max_nodes, device=device).unsqueeze(0) >= counts.unsqueeze(1)
         
         x_transformed = x_padded
         for layer in self.transformer_layers:
-            x_transformed = layer(x_transformed, src_key_padding_mask=padding_mask)
+            x_transformed = layer(x_transformed, 
+                                src_mask=attention_mask[0] if batch_size == 1 else None,
+                                src_key_padding_mask=padding_mask)
         
         x_out = x_transformed[batch, position_in_graph]
 
@@ -123,7 +168,6 @@ class TransformerLightningModule(pl.LightningModule):
             'oc_q_min': config.get('oc_q_min', 0.1),
             'oc_s_B': config.get('oc_s_B', 1.0),
             
-            'batch_size': config.get('batch_size', 1),
             'epochs': config.get('epochs', 100),
             'gradient_clip_val': config.get('gradient_clip_val', 1.0),
             'accumulate_grad_batches': config.get('accumulate_grad_batches', 1),

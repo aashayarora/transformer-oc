@@ -34,7 +34,6 @@ class ParticleTrackingDataModule(pl.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
-            batch_size=self.config['batch_size'],
             shuffle=True,
             num_workers=self.config['num_workers'],
             pin_memory=True,
@@ -44,7 +43,6 @@ class ParticleTrackingDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         return DataLoader(
             self.val_dataset,
-            batch_size=1,
             shuffle=False,
             num_workers=self.config['num_workers'],
             pin_memory=True,
@@ -148,7 +146,7 @@ class Trainer:
             print(f"Final model saved to {final_model_path}")
 
             config_save_path = os.path.join(tb_logger.log_dir, 'config.yaml')
-            os.copy_file_range(self.config['config'], config_save_path)
+            os.copy(self.config['config'], config_save_path)
 
 def main():
     parser = argparse.ArgumentParser(description='Train Graph Neural Network for Particle Tracking')
