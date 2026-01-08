@@ -19,7 +19,6 @@ class ObjectCondensation(torch.nn.Module):
                  p_beta_scaling = arctanhsq,
                  repulsive_chunk_size = 32,
                  repulsive_distance_cutoff = None,
-                 use_checkpointing = False,
                  **kwargs) -> None:
         '''
         Initializes the ObjectCondensation loss module.
@@ -69,10 +68,6 @@ class ObjectCondensation(torch.nn.Module):
             repulsive_distance_cutoff (float, optional):
                 Maximum distance for repulsive potential. Objects farther apart are ignored.
                 This can dramatically reduce memory and compute. Default: None (no cutoff).
-        
-            use_checkpointing (bool):
-                Whether to use gradient checkpointing for memory efficiency during backprop.
-                Trades compute for memory. Default: False.
         
             **kwargs: 
                 Additional keyword arguments passed to the parent `torch.nn.Module`.
@@ -129,7 +124,6 @@ class ObjectCondensation(torch.nn.Module):
         self.p_beta_scaling = p_beta_scaling
         self.repulsive_chunk_size = repulsive_chunk_size
         self.repulsive_distance_cutoff = repulsive_distance_cutoff
-        self.use_checkpointing = use_checkpointing
 
         self.pl_norm = self._no_op if not norm_payload else self._norm_payload
         self.rep_norm = self._norm_repulsive_fixed if fixed_repulsive_norm is not None else self._norm_repulsive
@@ -497,17 +491,9 @@ class ObjectCondensation(torch.nn.Module):
         beta_scale_k = beta_scale[alpha_indices] # K x 1
 
         # Compute potentials with optional gradient checkpointing
-        if self.use_checkpointing and self.training:
-            from torch.utils.checkpoint import checkpoint
-            L_V_k, L_rep_k = checkpoint(
-                self._compute_potentials,
-                beta_scale, beta_scale_k, coords, coords_k, coords_k_m, M, M_not,
-                use_reentrant=False
-            )
-        else:
-            L_V_k, L_rep_k = self._compute_potentials(
-                beta_scale, beta_scale_k, coords, coords_k, coords_k_m, M, M_not
-            )
+        L_V_k, L_rep_k = self._compute_potentials(
+            beta_scale, beta_scale_k, coords, coords_k, coords_k_m, M, M_not
+        )
 
         # Use repeat_interleave to assign batch indices
         batch_idx = strict_batch_from_row_splits(row_splits)

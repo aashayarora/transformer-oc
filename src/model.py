@@ -8,19 +8,22 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
 
-# from utils.object_condensation import ObjectCondensation
-from fastgraphcompute.object_condensation import ObjectCondensation
+from utils.object_condensation import ObjectCondensation
+# from fastgraphcompute.object_condensation import ObjectCondensation
 from utils.torch_geometric_interface import row_splits_from_strict_batch as batch_to_rowsplits
 
 import pytorch_lightning as pl
 
 class TransformerOCModel(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers, num_heads, latent_dim, dropout=0.1):
+    def __init__(self, input_dim, hidden_dim, num_layers, num_heads, latent_dim, dropout=0.1, 
+                 dr_threshold=0.2, attention_chunk_size=1024):
         super().__init__()
 
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.num_layers = num_layers
+        self.dr_threshold = dr_threshold
+        self.attention_chunk_size = attention_chunk_size
 
         self.transformer_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
@@ -65,12 +68,16 @@ class TransformerOCModel(nn.Module):
         nn.init.xavier_uniform_(self.latent_head[-1].weight)
         nn.init.zeros_(self.latent_head[-1].bias)
 
-    def compute_dr_mask(self, x_raw, batch, dr_threshold=0.2):
+    def compute_dr_mask(self, x_raw, batch):
+        """
+        Compute ΔR-based attention mask efficiently.
+        Strategy: Only compute for potential neighbors (prefilter by eta distance).
+        """
         device = x_raw.device
-        batch_size = batch.max().item() + 1
+        N = x_raw.shape[0]
         
-        eta_norm = x_raw[:, 1]  # Normalized eta
-        phi_norm = x_raw[:, 2]  # Normalized phi
+        eta_norm = x_raw[:, 1]
+        phi_norm = x_raw[:, 2]
         
         eta_min, eta_max = -2.62, 2.62
         phi_min, phi_max = -3.1416, 3.1416
@@ -78,17 +85,31 @@ class TransformerOCModel(nn.Module):
         eta = eta_norm * (eta_max - eta_min) + eta_min
         phi = phi_norm * (phi_max - phi_min) + phi_min
         
-        deta = eta.unsqueeze(1) - eta.unsqueeze(0)  # [N, N]
-        dphi = phi.unsqueeze(1) - phi.unsqueeze(0)  # [N, N]
+        chunk_size = self.attention_chunk_size
+        attention_mask = torch.full((N, N), float('-inf'), device=device, dtype=torch.float32)
         
-        dphi = torch.atan2(torch.sin(dphi), torch.cos(dphi))
-        
-        dr = torch.sqrt(deta**2 + dphi**2)
-        
-        attention_mask = torch.zeros_like(dr)
-        attention_mask[dr > dr_threshold] = float('-inf')
-        
-        del deta, dphi, dr, eta, phi
+        for i in range(0, N, chunk_size):
+            i_end = min(i + chunk_size, N)
+            chunk_len = i_end - i
+            
+            eta_chunk = eta[i:i_end].unsqueeze(1)  # [chunk, 1]
+            deta_abs = torch.abs(eta_chunk - eta.unsqueeze(0))  # [chunk, N]
+            
+            potential_neighbors = deta_abs <= self.dr_threshold
+            
+            if potential_neighbors.any():
+                phi_chunk = phi[i:i_end].unsqueeze(1)  # [chunk, 1]
+                dphi = phi_chunk - phi.unsqueeze(0)  # [chunk, N]
+                dphi = torch.atan2(torch.sin(dphi), torch.cos(dphi))
+                
+                deta = eta_chunk - eta.unsqueeze(0)
+                dr = torch.sqrt(deta**2 + dphi**2)
+                
+                attention_mask[i:i_end, :] = torch.where(dr <= self.dr_threshold, 0.0, float('-inf'))
+                
+                del dphi, deta, dr
+            
+            del deta_abs, potential_neighbors
         
         return attention_mask
 
@@ -100,7 +121,7 @@ class TransformerOCModel(nn.Module):
         
         x_input = x.unsqueeze(0)  # [1, N, hidden_dim]
         
-        attention_mask = self.compute_dr_mask(x_raw, batch, dr_threshold=0.2)
+        attention_mask = self.compute_dr_mask(x_raw, batch)
         attention_mask = attention_mask.to(device)
 
         x_transformed = x_input
@@ -110,6 +131,7 @@ class TransformerOCModel(nn.Module):
         x_out = x_transformed.squeeze(0)
 
         coords_latent = self.latent_head(x_out)
+        coords_latent = torch.nn.functional.normalize(coords_latent, p=2, dim=-1)
 
         eps = 1e-6
         beta = self.beta_head(x_out).sigmoid()
@@ -163,14 +185,15 @@ class TransformerLightningModule(pl.LightningModule):
             num_heads=self.hparams.num_heads,
             latent_dim=self.hparams.latent_dim,
             dropout=self.hparams.dropout,
+            dr_threshold=config.get('dr_threshold', 0.2),
+            attention_chunk_size=config.get('attention_chunk_size', 1024)
         )
         
         self.criterion = ObjectCondensation(
             q_min=self.hparams.oc_q_min,
             s_B=self.hparams.oc_s_B,
-            # repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
-            # repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None),
-            # use_checkpointing=config.get('oc_use_checkpointing', False)
+            repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
+            repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None)
         )
     
     def training_step(self, data):
