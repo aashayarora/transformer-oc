@@ -69,9 +69,6 @@ class TransformerOCModel(nn.Module):
         device = x_raw.device
         batch_size = batch.max().item() + 1
         
-        counts = torch.bincount(batch, minlength=batch_size)
-        max_nodes = counts.max().item()
-        
         eta_norm = x_raw[:, 1]  # Normalized eta
         phi_norm = x_raw[:, 2]  # Normalized phi
         
@@ -81,29 +78,17 @@ class TransformerOCModel(nn.Module):
         eta = eta_norm * (eta_max - eta_min) + eta_min
         phi = phi_norm * (phi_max - phi_min) + phi_min
         
-        eta_padded = torch.zeros(batch_size, max_nodes, device=device, dtype=x_raw.dtype)
-        phi_padded = torch.zeros(batch_size, max_nodes, device=device, dtype=x_raw.dtype)
-        
-        offsets = torch.zeros(batch_size + 1, device=device, dtype=torch.long)
-        offsets[1:] = counts.cumsum(0)
-        position_in_graph = torch.arange(len(batch), device=device) - offsets[batch]
-        
-        eta_padded[batch, position_in_graph] = eta
-        phi_padded[batch, position_in_graph] = phi
-        
-        deta = eta_padded.unsqueeze(2) - eta_padded.unsqueeze(1)  # [B, N, N]
-        dphi = phi_padded.unsqueeze(2) - phi_padded.unsqueeze(1)  # [B, N, N]
+        deta = eta.unsqueeze(1) - eta.unsqueeze(0)  # [N, N]
+        dphi = phi.unsqueeze(1) - phi.unsqueeze(0)  # [N, N]
         
         dphi = torch.atan2(torch.sin(dphi), torch.cos(dphi))
         
         dr = torch.sqrt(deta**2 + dphi**2)
         
-        attention_mask = dr > dr_threshold
+        attention_mask = torch.zeros_like(dr)
+        attention_mask[dr > dr_threshold] = float('-inf')
         
-        padding_mask = torch.arange(max_nodes, device=device).unsqueeze(0) >= counts.unsqueeze(1)
-        padding_mask_expanded = padding_mask.unsqueeze(1) | padding_mask.unsqueeze(2)
-        
-        attention_mask = attention_mask | padding_mask_expanded
+        del deta, dphi, dr, eta, phi
         
         return attention_mask
 
@@ -113,27 +98,16 @@ class TransformerOCModel(nn.Module):
         batch_size = batch.max().item() + 1
         device = x.device
         
-        counts = torch.bincount(batch, minlength=batch_size)
-        max_nodes = counts.max().item()
-        
-        x_padded = torch.zeros(batch_size, max_nodes, self.hidden_dim, device=device, dtype=x.dtype)
-        
-        offsets = torch.zeros(batch_size + 1, device=device, dtype=torch.long)
-        offsets[1:] = counts.cumsum(0)
-        position_in_graph = torch.arange(len(batch), device=device) - offsets[batch]
-        
-        x_padded[batch, position_in_graph] = x
+        x_input = x.unsqueeze(0)  # [1, N, hidden_dim]
         
         attention_mask = self.compute_dr_mask(x_raw, batch, dr_threshold=0.2)
-        padding_mask = torch.arange(max_nodes, device=device).unsqueeze(0) >= counts.unsqueeze(1)
-        
-        x_transformed = x_padded
+        attention_mask = attention_mask.to(device)
+
+        x_transformed = x_input
         for layer in self.transformer_layers:
-            x_transformed = layer(x_transformed, 
-                                src_mask=attention_mask[0] if batch_size == 1 else None,
-                                src_key_padding_mask=padding_mask)
+            x_transformed = layer(x_transformed, src_mask=attention_mask)
         
-        x_out = x_transformed[batch, position_in_graph]
+        x_out = x_transformed.squeeze(0)
 
         coords_latent = self.latent_head(x_out)
 
