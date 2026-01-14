@@ -151,6 +151,8 @@ class TransformerLightningModule(pl.LightningModule):
             'num_heads': config['nhead'],
             'latent_dim': config['latent_dim'],
             'dropout': config.get('dropout', 0.1),
+            'dr_threshold': config.get('dr_threshold', 0.2),
+            'attention_chunk_size': config.get('attention_chunk_size', 512),
             
             'learning_rate': config['learning_rate'],
             'weight_decay': config['weight_decay'],
@@ -163,6 +165,7 @@ class TransformerLightningModule(pl.LightningModule):
             
             'oc_q_min': config.get('oc_q_min', 0.1),
             'oc_s_B': config.get('oc_s_B', 1.0),
+            'oc_repulsive_chunk_size': config.get('oc_repulsive_chunk_size', 32),
             
             'epochs': config.get('epochs', 100),
             'gradient_clip_val': config.get('gradient_clip_val', 1.0),
@@ -185,15 +188,14 @@ class TransformerLightningModule(pl.LightningModule):
             num_heads=self.hparams.num_heads,
             latent_dim=self.hparams.latent_dim,
             dropout=self.hparams.dropout,
-            dr_threshold=config.get('dr_threshold', 0.2),
-            attention_chunk_size=config.get('attention_chunk_size', 1024)
+            dr_threshold=self.hparams.dr_threshold,
+            attention_chunk_size=self.hparams.attention_chunk_size
         )
         
         self.criterion = ObjectCondensation(
             q_min=self.hparams.oc_q_min,
             s_B=self.hparams.oc_s_B,
-            repulsive_chunk_size=config.get('oc_repulsive_chunk_size', 32),
-            repulsive_distance_cutoff=config.get('oc_repulsive_distance_cutoff', None)
+            repulsive_chunk_size=self.hparams.oc_repulsive_chunk_size,
         )
     
     def training_step(self, data):
