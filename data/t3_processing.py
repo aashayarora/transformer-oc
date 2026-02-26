@@ -11,7 +11,7 @@ from torch_geometric.data import Data
 
 import random
 
-SIM_VARS = ["sim_pt", "sim_eta", "sim_phi"]
+SIM_VARS = ["sim_pt", "sim_eta", "sim_phi", "sim_q", "sim_vx", "sim_vy", "sim_vz"]
 
 T3_VARS = ["t3_pt", "t3_eta", "t3_phi"]
 LS_INDEX = ["t3_lsIdx0", "t3_lsIdx1"]
@@ -25,12 +25,15 @@ TARGET = ["t3_simIdx"]
 
 FAKE_TARGET = ["t3_isFake"]
 
-ALL_COLUMNS = SIM_VARS + T3_VARS + LS_INDEX + LS_VARS + MD_VARS + MD_INDEX + TARGET + FAKE_TARGET
+LAYER_INFO = ["md_layer"]
+MD_SIMIDX = ["md_simIdx"]
+
+ALL_COLUMNS = SIM_VARS + T3_VARS + LS_INDEX + LS_VARS + MD_VARS + MD_INDEX + TARGET + FAKE_TARGET + LAYER_INFO + MD_SIMIDX
 
 MAX_T3_PT = 2000
 
 class GraphBuilder:
-    def __init__(self, input_path, output_path, train_split=0.8):
+    def __init__(self, input_paths, output_path, train_split=0.8):
         self.output_path = output_path
         self.train_split = train_split
         
@@ -42,7 +45,9 @@ class GraphBuilder:
         os.makedirs(self.train_path, exist_ok=True)
         os.makedirs(self.val_path, exist_ok=True)
 
-        self.input_tree = uproot.open(input_path)["tree"]
+        if isinstance(input_paths, str):
+            input_paths = [input_paths]
+        self.input_trees = [uproot.open(p)["tree"] for p in input_paths]
 
     def process_event(self, event_data, idx, args):
         """Processes a single event and saves the graph."""
@@ -74,22 +79,31 @@ class GraphBuilder:
             
             md_features = md_features.reshape(-1, 4 * len(MD_VARS))
 
+            md_layer = ak.to_dataframe(event_data[LAYER_INFO]).values[md_idx_flat]
+            md_layer = md_layer.reshape(-1, 4)
+
+            md_simIdx = ak.to_dataframe(event_data[MD_SIMIDX]).values[md_idx_flat]
+            md_simIdx = md_simIdx.reshape(-1, 4)
+
             if args.nofakes:
                 fake_mask = ak.to_dataframe(event_data[FAKE_TARGET]).values.flatten() == 0
                 node_features = torch.Tensor(ak.concatenate([t3_features[fake_mask], ls_features[fake_mask], md_features[fake_mask]], axis=1))
                 target = torch.Tensor(ak.to_dataframe(event_data[TARGET])[pt_mask].values)[fake_mask]
                 target_flat = target.flatten()
+                md_layer = torch.Tensor(md_layer[fake_mask])
+                md_simIdx = torch.Tensor(md_simIdx[fake_mask])
 
             else:
                 node_features = torch.Tensor(ak.concatenate([t3_features, ls_features, md_features], axis=1))
                 target = torch.Tensor(ak.to_dataframe(event_data[TARGET])[pt_mask].values)
                 target_flat = target.flatten()
                 target_flat[target_flat < 0] = -999999
+                md_layer = torch.Tensor(md_layer)
+                md_simIdx = torch.Tensor(md_simIdx) 
             
             sim_features = torch.Tensor(ak.to_dataframe(event_data[SIM_VARS]).values)
 
-            graph = Data(x=node_features, sim_index=target_flat, sim_features=sim_features)
-
+            graph = Data(x=node_features, sim_index=target_flat, sim_features=sim_features, md_layer=md_layer, md_simIdx=md_simIdx)
             if args.debug:
                 print(graph)
                 return
@@ -101,22 +115,27 @@ class GraphBuilder:
             print(f"Error processing graph {idx}: {e}")
 
     def process_events_in_parallel(self, args):
-        num_events = self.input_tree.num_entries if args.n_events == -1 else args.n_events
-        if args.debug:
-            num_events = 1
-        n_workers =  min(args.n_workers, os.cpu_count() // 2) if not args.debug else 1
+        n_workers = min(args.n_workers, os.cpu_count() // 2) if not args.debug else 1
+        global_idx = 0
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            for idx in range(num_events):
-                executor.submit(
-                    self.process_event,
-                    self.input_tree.arrays(ALL_COLUMNS, entry_start=idx, entry_stop=idx + 1),
-                    idx, 
-                    args
-                )
+            for tree in self.input_trees:
+                num_events = tree.num_entries if args.n_events == -1 else args.n_events
+                if args.debug:
+                    num_events = 1
+                for local_idx in range(num_events):
+                    executor.submit(
+                        self.process_event,
+                        tree.arrays(ALL_COLUMNS, entry_start=local_idx, entry_stop=local_idx + 1),
+                        global_idx,
+                        args
+                    )
+                    global_idx += 1
+                    if args.debug:
+                        break
 
 if __name__ == "__main__":
     argparser = ArgumentParser()
-    argparser.add_argument("--input", type=str, required=True)
+    argparser.add_argument("--input", type=str, nargs="+", required=True)
     argparser.add_argument("--output", type=str, default="./")
     argparser.add_argument("--n_workers", "-n", type=int, default=16)
     argparser.add_argument("--debug", action="store_true")

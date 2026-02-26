@@ -10,7 +10,7 @@ from torch_geometric.data import Data
 
 import random
 
-SIM_VARS = ["sim_pt", "sim_eta", "sim_phi"]
+SIM_VARS = ["sim_pt", "sim_eta", "sim_phi", "sim_q", "sim_vx", "sim_vy", "sim_vz"]
 LS_VARS = ["ls_pt", "ls_eta", "ls_phi", "ls_dPhis", "ls_dPhiChanges", "ls_dAlphaInners", "ls_dAlphaOuters", "ls_dAlphaInnerOuters"]
 MD_VARS = ["md_anchor_x", "md_anchor_y", "md_anchor_z", "md_other_x", "md_other_y", "md_other_z", "md_dphi", "md_dphichange", "md_dz"]
 
