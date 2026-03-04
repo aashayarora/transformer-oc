@@ -2,7 +2,6 @@ import os
 import torch
 from torch_geometric.data import Dataset
 import glob
-import gc
 
 class PCDataset(Dataset):
     def __init__(self, data_dir, subset=None):
