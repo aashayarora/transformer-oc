@@ -6,6 +6,9 @@ import json
 import torch
 import pytorch_lightning as pl
 
+# Use Tensor Cores on A30 — free ~10-20% speedup on matmuls
+torch.set_float32_matmul_precision('medium')
+
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor, ModelSummary
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch_geometric.loader import DataLoader
@@ -72,6 +75,9 @@ class Trainer:
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
+
+        if self.config.get('compile', False):
+            model.model = torch.compile(model.model, mode='reduce-overhead')
         
         tb_logger = TensorBoardLogger(
             save_dir=self.config['output_dir'],
