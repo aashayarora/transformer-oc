@@ -68,109 +68,49 @@ class TransformerOCModel(nn.Module):
         nn.init.xavier_uniform_(self.latent_head[-1].weight)
         nn.init.zeros_(self.latent_head[-1].bias)
 
-    # Normalisation constants matching dataset.py (49-feature case)
-    # col 0: log(pt),  col 1: eta,  col 2: phi
-    # cols 13-48: MD features (4 MDs × 9): anchor_x, anchor_y, anchor_z, other_x, ...
-    _MIN_VALS = torch.tensor([-3.4627, -2.4507, -3.1416, -0.2362, -0.7272, -0.8202, -0.8768, -0.5988,
-                               -0.2704, -0.8894, -1.0590, -1.3935, -0.7862, -73.8012, -72.4212, -187.5750,
-                               -73.8019, -77.1076, -187.8705, -0.0231, -0.5393, -5.0250, -93.8255, -93.9099,
-                               -223.8540, -97.9344, -93.9060, -224.1495, -0.0111, -0.8231, -5.0255, -93.8255,
-                               -93.9099, -223.8540, -97.9344, -93.9060, -224.1495, -0.0111, -0.8231, -5.0255,
-                               -110.0160, -110.0150, -267.2350, -110.1943, -110.1950, -267.6350, -0.0046,
-                               -0.9416, -5.0259])
-    _MAX_VALS = torch.tensor([7.5964, 2.4535, 3.1416, 0.2434, 0.7304, 0.7744, 0.8728, 0.5682,
-                               0.2755, 0.8922, 1.1500, 1.5453, 0.8093, 73.7524, 70.4150, 187.5750,
-                               73.7676, 71.4665, 187.8705, 0.0228, 0.5575, 5.0250, 93.8869, 93.8406,
-                               223.8540, 96.1440, 96.9953, 224.1495, 0.0097, 0.8098, 5.0253, 93.8869,
-                               93.8406, 223.8540, 96.1440, 96.9953, 224.1495, 0.0097, 0.8098, 5.0253,
-                               110.0128, 110.0150, 267.2350, 110.1814, 110.1950, 267.6350, 0.0050,
-                               0.9323, 5.0260])
-
-    def _denorm(self, x_raw, col):
-        """Denormalise a single column back to its physical value."""
-        mn = self._MIN_VALS[col].to(x_raw.device)
-        mx = self._MAX_VALS[col].to(x_raw.device)
-        return x_raw[:, col] * (mx - mn + 1e-8) + mn
-
     def compute_dr_mask(self, x_raw, batch):
         """
-        Compute ΔR-based attention mask using helix propagation.
-
-        All hits are propagated to a common reference radius r_target using
-        the barrel helix formula, then masked by ΔR in (η, φ_propagated) space.
-
-        Helix φ propagation (small-angle, constant-B approximation):
-            Δφ = arcsin( (r_target² - r_init²) / (2 · r_init · R_helix) )
-        where R_helix = pT / (0.3 · B) [pT in GeV, R in cm, B = 3.8 T].
-
-        r_init is estimated as the mean transverse radius of the 4 MD anchor hits.
+        Compute ΔR-based attention mask efficiently.
+        Strategy: Only compute for potential neighbors (prefilter by eta distance).
         """
         device = x_raw.device
         N = x_raw.shape[0]
-
-        B_FIELD = 3.8        # Tesla
-        R_TARGET = 60.0      # cm — roughly middle of the tracker
-
-        # --- Denormalise physics quantities ---
-        # col 0 is log(pt) normalised; denorm then exp to get pT in GeV
-        log_pt = self._denorm(x_raw, 0)
-        pt = torch.exp(log_pt).clamp(min=0.5)   # GeV; clamp avoids huge R for near-zero pT
-
-        eta = self._denorm(x_raw, 1)
-        phi = self._denorm(x_raw, 2)
-
-        # --- Compute r_init from the 4 MD anchor (x,y) positions ---
-        # MD feature block starts at col 13; each MD occupies 9 cols:
-        #   anchor_x(+0), anchor_y(+1), anchor_z(+2), other_x(+3), ...
-        # MD0: cols 13,14  MD1: cols 22,23  MD2: cols 31,32  MD3: cols 40,41
-        md_offsets = [13, 22, 31, 40]
-        r_vals = []
-        for off in md_offsets:
-            ax = self._denorm(x_raw, off)       # anchor_x [cm]
-            ay = self._denorm(x_raw, off + 1)   # anchor_y [cm]
-            r_vals.append(torch.sqrt(ax**2 + ay**2))
-        r_init = torch.stack(r_vals, dim=1).mean(dim=1)   # [N]
-
-        # --- Helix radius [cm] ---
-        R_helix = pt / (0.3 * B_FIELD)   # R = pT[GeV] / (0.3 · B[T])  in cm
-
-        # --- Propagate φ to r_target ---
-        # arg = (r_target² - r_init²) / (2 · r_init · R_helix)
-        # clamped to [-1, 1] for numerical safety
-        arg = (R_TARGET**2 - r_init**2) / (2.0 * r_init * R_helix + 1e-6)
-        arg = arg.clamp(-1.0, 1.0)
-        delta_phi = torch.asin(arg)
-        phi_prop = phi + delta_phi                            # propagated φ [rad]
-
-        # --- η is unchanged (straight line along z for barrel) ---
-        eta_prop = eta
-
-        # --- Chunked ΔR mask in propagated (η, φ) space ---
+        
+        eta_norm = x_raw[:, 1]
+        phi_norm = x_raw[:, 2]
+        
+        eta_min, eta_max = -2.62, 2.62
+        phi_min, phi_max = -3.1416, 3.1416
+        
+        eta = eta_norm * (eta_max - eta_min) + eta_min
+        phi = phi_norm * (phi_max - phi_min) + phi_min
+        
         chunk_size = self.attention_chunk_size
         attention_mask = torch.full((N, N), float('-inf'), device=device, dtype=torch.float32)
-
+        
         for i in range(0, N, chunk_size):
             i_end = min(i + chunk_size, N)
-
-            eta_chunk = eta_prop[i:i_end].unsqueeze(1)   # [chunk, 1]
-            deta_abs = torch.abs(eta_chunk - eta_prop.unsqueeze(0))   # [chunk, N]
-
+            chunk_len = i_end - i
+            
+            eta_chunk = eta[i:i_end].unsqueeze(1)  # [chunk, 1]
+            deta_abs = torch.abs(eta_chunk - eta.unsqueeze(0))  # [chunk, N]
+            
             potential_neighbors = deta_abs <= self.dr_threshold
-
+            
             if potential_neighbors.any():
-                phi_chunk = phi_prop[i:i_end].unsqueeze(1)   # [chunk, 1]
-                dphi = phi_chunk - phi_prop.unsqueeze(0)      # [chunk, N]
+                phi_chunk = phi[i:i_end].unsqueeze(1)  # [chunk, 1]
+                dphi = phi_chunk - phi.unsqueeze(0)  # [chunk, N]
                 dphi = torch.atan2(torch.sin(dphi), torch.cos(dphi))
-
-                deta = eta_chunk - eta_prop.unsqueeze(0)
+                
+                deta = eta_chunk - eta.unsqueeze(0)
                 dr = torch.sqrt(deta**2 + dphi**2)
-
+                
                 attention_mask[i:i_end, :] = torch.where(dr <= self.dr_threshold, 0.0, float('-inf'))
-
+                
                 del dphi, deta, dr
-
+            
             del deta_abs, potential_neighbors
-
+        
         return attention_mask
 
     def forward(self, x_raw, batch):
