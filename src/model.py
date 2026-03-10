@@ -141,13 +141,54 @@ class TransformerOCModel(nn.Module):
         nn.init.xavier_uniform_(self.latent_head[-1].weight)
         nn.init.zeros_(self.latent_head[-1].bias)
 
+    # Normalisation constants matching dataset.py (49-feature case)
+    # col 1: eta, col 2: phi
+    # MD slots 0,1,3 → col offsets 13,22,40; each block 9 cols: anchor_x(+0), anchor_y(+1), anchor_z(+2)
+    _MIN_VALS = torch.tensor([-3.4627, -2.4507, -3.1416, -0.2362, -0.7272, -0.8202, -0.8768, -0.5988,
+                               -0.2704, -0.8894, -1.0590, -1.3935, -0.7862, -73.8012, -72.4212, -187.5750,
+                               -73.8019, -77.1076, -187.8705, -0.0231, -0.5393, -5.0250, -93.8255, -93.9099,
+                               -223.8540, -97.9344, -93.9060, -224.1495, -0.0111, -0.8231, -5.0255, -93.8255,
+                               -93.9099, -223.8540, -97.9344, -93.9060, -224.1495, -0.0111, -0.8231, -5.0255,
+                               -110.0160, -110.0150, -267.2350, -110.1943, -110.1950, -267.6350, -0.0046,
+                               -0.9416, -5.0259])
+    _MAX_VALS = torch.tensor([7.5964, 2.4535, 3.1416, 0.2434, 0.7304, 0.7744, 0.8728, 0.5682,
+                               0.2755, 0.8922, 1.1500, 1.5453, 0.8093, 73.7524, 70.4150, 187.5750,
+                               73.7676, 71.4665, 187.8705, 0.0228, 0.5575, 5.0250, 93.8869, 93.8406,
+                               223.8540, 96.1440, 96.9953, 224.1495, 0.0097, 0.8098, 5.0253, 93.8869,
+                               93.8406, 223.8540, 96.1440, 96.9953, 224.1495, 0.0097, 0.8098, 5.0253,
+                               110.0128, 110.0150, 267.2350, 110.1814, 110.1950, 267.6350, 0.0050,
+                               0.9323, 5.0260])
+    _MD_OFFSETS = [13, 22, 40]   # inner, middle, outer anchor col offsets
+    _N_MDS = 3
+
+    def _denorm(self, x_raw, col):
+        mn = self._MIN_VALS[col].to(x_raw.device)
+        mx = self._MAX_VALS[col].to(x_raw.device)
+        return x_raw[:, col] * (mx - mn + 1e-8) + mn
+
+    def _md_coords(self, x_raw):
+        """
+        Extract per-MD anchor (r, eta, phi) for the 3 unique layers of each T3.
+        Returns r, eta, phi each of shape [N, 3].
+        """
+        ax = torch.stack([self._denorm(x_raw, off)     for off in self._MD_OFFSETS], dim=1)
+        ay = torch.stack([self._denorm(x_raw, off + 1) for off in self._MD_OFFSETS], dim=1)
+        az = torch.stack([self._denorm(x_raw, off + 2) for off in self._MD_OFFSETS], dim=1)
+        r   = torch.sqrt(ax**2 + ay**2)
+        phi = torch.atan2(ay, ax)
+        theta = torch.atan2(r, az)
+        eta = -torch.log(torch.clamp(torch.tan(theta / 2.0), min=1e-6))
+        return r, eta, phi
+
     @torch.no_grad()
     def build_neighbor_index(self, x_raw, batch):
         """
-        Fully vectorized ΔR neighbor index construction — no Python loops over nodes.
+        Build neighbor index using closest-radius MD anchor ΔR.
 
-        Processes nodes in chunks of `chunk_size` rows at a time to keep peak
-        memory at O(N * chunk_size) instead of O(N²).
+        For each pair of T3s (i, j) we compare all 3×3 = 9 combinations of
+        anchor hits (inner/middle/outer from each T3), select the pair with
+        the smallest |Δr| (closest in transverse radius), and use the (η, φ)
+        of those two anchors to compute ΔR.
 
         Returns:
             neighbor_idx:  [N, k]  int64 — neighbor indices, padded with 0
@@ -156,51 +197,54 @@ class TransformerOCModel(nn.Module):
         device = x_raw.device
         N = x_raw.shape[0]
         k = self.max_neighbors
-
-        eta_norm = x_raw[:, 1]
-        phi_norm = x_raw[:, 2]
-        eta_min, eta_max = -2.62, 2.62
-        phi_min, phi_max = -3.1416, 3.1416
-        eta = eta_norm * (eta_max - eta_min) + eta_min  # [N]
-        phi = phi_norm * (phi_max - phi_min) + phi_min  # [N]
-
-        neighbor_idx  = torch.zeros(N, k, dtype=torch.long, device=device)
-        neighbor_mask = torch.ones (N, k, dtype=torch.bool, device=device)
-
-        # Use same-graph offset: two nodes are in the same graph iff batch[i]==batch[j].
-        # Encode as a large additive penalty so cross-graph pairs always exceed threshold.
-        # We add this to dr so cross-graph pairs are never selected.
         CROSS_GRAPH_PENALTY = 1e6
 
-        chunk_size = 2048  # rows processed at once — tune for your GPU VRAM
+        # MD anchor coords: each [N, 3]
+        r_md, eta_md, phi_md = self._md_coords(x_raw)
+
+        neighbor_idx  = torch.zeros(N, k, dtype=torch.long,  device=device)
+        neighbor_mask = torch.ones (N, k, dtype=torch.bool,   device=device)
+
+        chunk_size = 512  # keep [chunk, N, 3, 3] tensors manageable
         for i_start in range(0, N, chunk_size):
             i_end = min(i_start + chunk_size, N)
-            C = i_end - i_start  # current chunk size
+            C = i_end - i_start
 
-            eta_chunk = eta[i_start:i_end]  # [C]
-            phi_chunk = phi[i_start:i_end]  # [C]
-            batch_chunk = batch[i_start:i_end]  # [C]
+            # All 3x3 |Δr| combinations: [C, N, 3, 3]
+            r_i    = r_md[i_start:i_end].view(C, 1, self._N_MDS, 1)   # [C,1,3,1]
+            r_j    = r_md.view(1, N, 1, self._N_MDS)                   # [1,N,1,3]
+            dr_r   = torch.abs(r_i - r_j)                              # [C,N,3,3]
 
-            # ΔR: [C, N]
-            deta = eta_chunk.unsqueeze(1) - eta.unsqueeze(0)
-            dphi = phi_chunk.unsqueeze(1) - phi.unsqueeze(0)
-            dphi = torch.atan2(torch.sin(dphi), torch.cos(dphi))
-            dr = torch.sqrt(deta ** 2 + dphi ** 2)  # [C, N]
+            # Best (closest-radius) MD pair per T3-T3 combination
+            dr_r_flat = dr_r.view(C, N, self._N_MDS * self._N_MDS)     # [C,N,9]
+            best_idx  = dr_r_flat.argmin(dim=-1)                        # [C,N]
+            md_i_best = best_idx // self._N_MDS                         # [C,N]
+            md_j_best = best_idx %  self._N_MDS                         # [C,N]
 
-            # Penalize cross-graph pairs so they're never picked
-            cross = (batch_chunk.unsqueeze(1) != batch.unsqueeze(0))  # [C, N]
-            dr = dr + cross.float() * CROSS_GRAPH_PENALTY
+            # Gather η and φ for the chosen MD on each side
+            row_i = torch.arange(C, device=device)
+            row_j = torch.arange(N, device=device)
 
-            # For each query node, find the k smallest dr values
-            # Clamp k to N in case the graph is tiny
+            # eta/phi for query T3s: index [C,N] into [C,3] → [C,N]
+            eta_i = eta_md[i_start:i_end][row_i.unsqueeze(1), md_i_best]  # [C,N]
+            phi_i = phi_md[i_start:i_end][row_i.unsqueeze(1), md_i_best]
+            eta_j = eta_md[row_j.unsqueeze(0), md_j_best]                 # [C,N]
+            phi_j = phi_md[row_j.unsqueeze(0), md_j_best]
+
+            deta = eta_i - eta_j
+            dphi = torch.atan2(torch.sin(phi_i - phi_j), torch.cos(phi_i - phi_j))
+            dr   = torch.sqrt(deta**2 + dphi**2)                           # [C,N]
+
+            # Penalize cross-graph pairs
+            cross = (batch[i_start:i_end].unsqueeze(1) != batch.unsqueeze(0))
+            dr    = dr + cross.float() * CROSS_GRAPH_PENALTY
+
             actual_k = min(k, N)
-            topk_dr, topk_col = torch.topk(dr, actual_k, dim=1, largest=False)  # [C, k]
+            topk_dr, topk_col = torch.topk(dr, actual_k, dim=1, largest=False)
 
-            # Valid if within threshold (cross-graph pairs have dr >> threshold)
-            valid = topk_dr <= self.dr_threshold  # [C, k]
+            valid = topk_dr <= self.dr_threshold
 
-            # Self-loop fallback for nodes with zero valid neighbors
-            no_valid = ~valid.any(dim=1)  # [C]
+            no_valid = ~valid.any(dim=1)
             if no_valid.any():
                 topk_col[no_valid, 0] = torch.arange(i_start, i_end, device=device)[no_valid]
                 valid[no_valid, 0] = True
